@@ -21,6 +21,8 @@
     </build>
     <modules>
         <module>source-analyzer</module>
+        <module>source-analyzer-maven-plugin</module>
+        <module>sample</module>
     </modules>
 
     <dependencies>

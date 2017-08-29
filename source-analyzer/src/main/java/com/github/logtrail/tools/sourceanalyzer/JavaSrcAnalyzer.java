@@ -2,6 +2,7 @@ package com.github.logtrail.tools.sourceanalyzer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.javaparser.JavaParser;
+import com.github.javaparser.ParseException;
 import com.github.javaparser.ParseProblemException;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.NodeList;
@@ -14,6 +15,13 @@ import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
+import com.github.javaparser.symbolsolver.SourceFileInfoExtractor;
+import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
+import com.github.javaparser.symbolsolver.model.resolution.SymbolReference;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.JavaParserTypeSolver;
+import com.github.javaparser.symbolsolver.resolution.typesolvers.ReflectionTypeSolver;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.SetMultimap;
 import org.slf4j.Logger;
@@ -39,7 +47,8 @@ import java.util.regex.PatternSyntaxException;
  */
 public class JavaSrcAnalyzer {
 
-    private String srcRoot, outputFile;
+    private List<String> srcRoots;
+    private String outputFile;
     private static final Set<String> LOG_METHODS = new HashSet<String>();
     private int fileCount = 0, logCount = 0;
     private List<LogStatement> logStatements;
@@ -49,6 +58,8 @@ public class JavaSrcAnalyzer {
     private static final Pattern REGEX_SPECIAL_CHARS_PATTERN = Pattern.compile(REGEX_SPECIAL_CHARS);
     private LogContext context;
     private Properties configProperties;
+    private List<String> classPath;
+    private JavaParserFacade parserFacade;
 
     static {
         LOG_METHODS.add("debug");
@@ -58,45 +69,81 @@ public class JavaSrcAnalyzer {
         LOG_METHODS.add("error");
     }
 
-    public JavaSrcAnalyzer(String configFile) throws IOException {
+    public JavaSrcAnalyzer(String configFile) throws IOException,ParseException {
         this.parseConfigFile(configFile);
+        createJavaSolver();
+    }
+
+    public JavaSrcAnalyzer(List<String> srcRoots,List<String> classPath,String outputFile, String context)
+            throws IOException,ParseException {
+        this.srcRoots = srcRoots;
+        this.classPath = classPath;
+        this.outputFile = outputFile;
+        this.context = LogContext.valueOf(context);
+        createJavaSolver();
     }
 
     private void parseConfigFile(String configFile) throws IOException {
         configProperties = new Properties();
         configProperties.load(new FileInputStream(configFile));
 
-        srcRoot = configProperties.getProperty("src.root","src");
+        String srcRootsStr = configProperties.getProperty("src.roots","src");
+        String[] srcRootTokens = srcRootsStr.split(":");
+        this.srcRoots = Arrays.asList(srcRootTokens);
+
         outputFile = configProperties.getProperty("output.file","patterns.json");
         context = LogContext.valueOf(configProperties.getProperty("context","CLASS"));
+
+        String classPathStr = configProperties.getProperty("CLASSPATH");
+        if (classPathStr != null && classPathStr.trim().length() > 0) {
+            String[] classpathTokens = classPathStr.split(":");
+            classPath = Arrays.asList(classpathTokens);
+        }
+
+    }
+
+    private void createJavaSolver() throws IOException,ParseException {
+        CombinedTypeSolver combinedTypeSolver = new CombinedTypeSolver();
+        combinedTypeSolver.add(new ReflectionTypeSolver());
+        for (String srcRoot : srcRoots) {
+            combinedTypeSolver.add(new JavaParserTypeSolver(new File(srcRoot)));
+        }
+
+        for (String cp : classPath) {
+            combinedTypeSolver.add(new JarTypeSolver(cp));
+        }
+        parserFacade = JavaParserFacade.get(combinedTypeSolver);
     }
 
     public void analyze() throws IOException {
 
-        Path path = Paths.get(srcRoot);
-        if (Files.isDirectory(path)) {
-            try {
-                logStatements = new ArrayList<>();
-                Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
-                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        if (file.toString().endsWith(".java")) {
-                            try {
-                                analyzeFile(file.toFile());
-                                fileCount++;
-                            } catch (ParseProblemException e) {
-                                LOGGER.warn("Exception while analyzing file {}", file,e);
+        for (String srcRoot : srcRoots) {
+            Path path = Paths.get(srcRoot);
+            if (Files.isDirectory(path)) {
+                try {
+                    logStatements = new ArrayList<>();
+                    System.out.println("Walking src" + srcRoot);
+                    Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                            if (file.toString().endsWith(".java")) {
+                                try {
+                                    analyzeFile(file.toFile());
+                                    fileCount++;
+                                } catch (ParseProblemException e) {
+                                    LOGGER.warn("Exception while analyzing file {}", file, e);
+                                }
                             }
+                            return FileVisitResult.CONTINUE;
                         }
-                        return FileVisitResult.CONTINUE;
-                    }
-                });
-                System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
-            } finally {
-                ObjectMapper mapper = new ObjectMapper();
-                mapper.writerWithDefaultPrettyPrinter().writeValue(new File(outputFile),logStatements);
+                    });
+                    System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
+                } finally {
+                    ObjectMapper mapper = new ObjectMapper();
+                    mapper.writerWithDefaultPrettyPrinter().writeValue(new File(outputFile), logStatements);
+                }
+            } else {
+                LOGGER.error("Specify a valid src directory: {}",srcRoot);
             }
-        } else {
-            System.err.println("Specify a valid src directory");
         }
     }
 
@@ -122,10 +169,19 @@ public class JavaSrcAnalyzer {
         for (MethodCallExpr methodCallExpr : methodCallExprList) {
             String methodName = methodCallExpr.getName().getIdentifier();
             if (LOG_METHODS.contains(methodName)) {
-//                SymbolReference<MethodDeclaration> solved = parserFacade.solve(methodCallExpr);
-//                if(solved.isSolved()) {
-//                    System.out.println(solved.getCorrespondingDeclaration().getPackageName());
-//                }
+
+                SymbolReference<com.github.javaparser.symbolsolver.model.declarations.MethodDeclaration> solved = parserFacade.solve(methodCallExpr);
+                if(solved.isSolved()) {
+                    System.out.println("Declaration : " + solved.getCorrespondingDeclaration());
+                    int numOfArgs = solved.getCorrespondingDeclaration().getNumberOfParams();
+                    if (numOfArgs == 2) {
+                        System.out.println(solved.getCorrespondingDeclaration().getLastParam().describeType());
+                    }
+                    NodeList<Expression> arguments = methodCallExpr.getArguments();
+                   // System.out.println("solved : " + solved.getCorrespondingDeclaration().getName());
+                }
+
+
                 int argCount = methodCallExpr.getArguments().size();
                 if (argCount > 0) {
                     Expression firstArg = methodCallExpr.getArguments().get(0);
@@ -139,12 +195,10 @@ public class JavaSrcAnalyzer {
                             if(context == LogContext.WITH_PACKAGE && packageDec.isPresent()) {
                                 clazz = packageDec.get().getNameAsString() + "." + clazz;
                             }
-                            logStatement.clazz = clazz;
+                            logStatement.context = clazz;
                             logStatement.level = methodName;
                             Optional<MethodDeclaration> method = methodCallExpr.getAncestorOfType(MethodDeclaration.class);
-                            if (method.isPresent()) {
-                                logStatement.method = method.get().getNameAsString();
-                            }
+                            method.ifPresent(methodDeclaration -> logStatement.method = methodDeclaration.getNameAsString());
                             logStatements.add(logStatement);
                         } catch (PatternSyntaxException ex) {
                             LOGGER.warn("Exception while converting regex {} in file {}. Message {}" , logString, file,ex.getMessage());
@@ -217,7 +271,7 @@ public class JavaSrcAnalyzer {
 
     static class LogStatement {
         private Pattern messageRegEx;
-        private String clazz;
+        private String context;
         private String level;
         private String method;
         private Map<String,String> args;
@@ -230,12 +284,12 @@ public class JavaSrcAnalyzer {
             this.messageRegEx = messageRegEx;
         }
 
-        public String getClazz() {
-            return clazz;
+        public String getContext() {
+            return context;
         }
 
-        public void setClazz(String clazz) {
-            this.clazz = clazz;
+        public void setContext(String context) {
+            this.context = context;
         }
 
         public String getLevel() {
@@ -263,7 +317,7 @@ public class JavaSrcAnalyzer {
         }
 
         public String toString() {
-            return this.clazz + "|" + this.messageRegEx.pattern();
+            return this.context + "|" + this.messageRegEx.pattern();
         }
 
     }
