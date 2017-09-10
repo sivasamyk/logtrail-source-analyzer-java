@@ -9,14 +9,13 @@ import com.github.javaparser.ast.NodeList;
 import com.github.javaparser.ast.PackageDeclaration;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
-import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
-import com.github.javaparser.symbolsolver.SourceFileInfoExtractor;
 import com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade;
+import com.github.javaparser.symbolsolver.model.declarations.MethodDeclaration;
 import com.github.javaparser.symbolsolver.model.resolution.SymbolReference;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.CombinedTypeSolver;
 import com.github.javaparser.symbolsolver.resolution.typesolvers.JarTypeSolver;
@@ -61,6 +60,9 @@ public class JavaSrcAnalyzer {
     private List<String> classPath;
     private JavaParserFacade parserFacade;
 
+    private static final String SLF4J_PACKAGE = "org.slf4j";
+    private static final String SLF4J_CLASS = "Logger";
+
     static {
         LOG_METHODS.add("debug");
         LOG_METHODS.add("trace");
@@ -94,7 +96,7 @@ public class JavaSrcAnalyzer {
         outputFile = configProperties.getProperty("output.file","patterns.json");
         context = LogContext.valueOf(configProperties.getProperty("context","CLASS"));
 
-        String classPathStr = configProperties.getProperty("CLASSPATH");
+        String classPathStr = configProperties.getProperty("classpath");
         if (classPathStr != null && classPathStr.trim().length() > 0) {
             String[] classpathTokens = classPathStr.split(":");
             classPath = Arrays.asList(classpathTokens);
@@ -170,10 +172,34 @@ public class JavaSrcAnalyzer {
             String methodName = methodCallExpr.getName().getIdentifier();
             if (LOG_METHODS.contains(methodName)) {
 
-                SymbolReference<com.github.javaparser.symbolsolver.model.declarations.MethodDeclaration> solved = parserFacade.solve(methodCallExpr);
+                //Verify if the method belongs to logger class
+//                if(methodCallExpr.getScope().isPresent()) {
+//                    Expression scope = methodCallExpr.getScope().get();
+//                    SymbolReference<? extends ValueDeclaration> reference = parserFacade.solve(scope);
+//                    if(reference.isSolved()) {
+//                        reference.getCorrespondingDeclaration().getType();
+//                    }
+//                    System.out.println(reference);
+//                }
+
+                SymbolReference<com.github.javaparser.symbolsolver.model.declarations.MethodDeclaration> solved =
+                        parserFacade.solve(methodCallExpr);
                 if(solved.isSolved()) {
-                    System.out.println("Declaration : " + solved.getCorrespondingDeclaration());
+
+                    MethodDeclaration methodDeclaration = solved.getCorrespondingDeclaration();
+                    String methodPackage = methodDeclaration.getPackageName();
+                    String methodClass = methodDeclaration.getClassName();
+                    //If the method is not SLF4J logger ignore
+                    if (SLF4J_PACKAGE.equals(methodPackage) && SLF4J_CLASS.equals(methodClass)) {
+                        continue;
+                    }
+
+                    //Calculate context
+
+
+                    //Verify if the methods belogs to logger class
                     int numOfArgs = solved.getCorrespondingDeclaration().getNumberOfParams();
+
                     if (numOfArgs == 2) {
                         System.out.println(solved.getCorrespondingDeclaration().getLastParam().describeType());
                     }
@@ -198,7 +224,7 @@ public class JavaSrcAnalyzer {
                             logStatement.context = clazz;
                             logStatement.level = methodName;
                             Optional<MethodDeclaration> method = methodCallExpr.getAncestorOfType(MethodDeclaration.class);
-                            method.ifPresent(methodDeclaration -> logStatement.method = methodDeclaration.getNameAsString());
+
                             logStatements.add(logStatement);
                         } catch (PatternSyntaxException ex) {
                             LOGGER.warn("Exception while converting regex {} in file {}. Message {}" , logString, file,ex.getMessage());
