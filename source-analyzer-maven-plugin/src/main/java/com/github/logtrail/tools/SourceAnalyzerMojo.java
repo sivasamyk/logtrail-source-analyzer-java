@@ -57,14 +57,8 @@ public class SourceAnalyzerMojo
     public void execute()
         throws MojoExecutionException
     {
-        List<String> classPath = new ArrayList<>();
-        for (Artifact artifact : project.getArtifacts()) {
-            classPath.add(artifact.getFile().getAbsolutePath());
-        }
-        System.out.println(project.getCompileSourceRoots());
-        System.out.println("ClassPath " + classPath);
         try {
-            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(project.getCompileSourceRoots(), classPath,
+            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(project.getBasedir().getAbsolutePath(),
                     outputFile, context);
             srcAnalyzer.analyze();
         } catch (Exception e) {

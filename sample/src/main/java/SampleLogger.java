@@ -13,6 +13,8 @@ public class SampleLogger {
         LOGGER.error("This is logger with string arguments {}",str);
         int n = 42;
         LOGGER.error("This is logger with integer arguments {}", n);
+
+        LOGGER.info("This will be matched : " + "John Smith");
         try {
 
         } catch (Exception e) {
