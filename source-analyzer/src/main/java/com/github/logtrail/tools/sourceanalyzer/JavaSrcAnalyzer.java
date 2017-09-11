@@ -43,9 +43,9 @@ import java.util.regex.PatternSyntaxException;
  */
 public class JavaSrcAnalyzer {
 
-    private String srcRoot;
+    private List<String> srcRoots,excludes;
     private String outputFile;
-    private static final Set<String> LOG_METHODS = new HashSet<>();
+    private static final Set<String> LOG_METHODS = new HashSet<String>();
     private int fileCount = 0, logCount = 0;
     private List<LogStatement> logStatements;
     private static final String REGEX_SPECIAL_CHARS = "[\\<\\(\\[\\\\\\^\\-\\=\\$\\!\\|\\]\\)‌​\\?\\*\\+\\.\\>]";
@@ -62,40 +62,55 @@ public class JavaSrcAnalyzer {
         LOG_METHODS.add("error");
     }
 
-    public JavaSrcAnalyzer(String srcRoot, String outputFile, String context)
+    public JavaSrcAnalyzer(List<String> srcRoots, List<String> excludes, String outputFile, String context)
             throws IOException, ParseException {
-        this.srcRoot = srcRoot;
+        this.srcRoots = srcRoots;
+        this.excludes = excludes;
         this.outputFile = outputFile;
         this.context = LogContext.valueOf(context);
     }
 
     public void analyze() throws IOException {
 
-        Path path = Paths.get(srcRoot);
-        if (Files.isDirectory(path)) {
-            try {
-                logStatements = new ArrayList<>();
-                System.out.println("Walking src" + srcRoot);
-                Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
-                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                        if (file.toString().endsWith(".java")) {
-                            try {
-                                analyzeFile(file.toFile());
-                                fileCount++;
-                            } catch (ParseProblemException e) {
-                                LOGGER.warn("Exception while analyzing file {}", file, e);
+        for (String srcRoot : srcRoots) {
+            Path path = Paths.get(srcRoot);
+            if (Files.isDirectory(path)) {
+                try {
+                    logStatements = new ArrayList<>();
+                    System.out.println("Walking src" + srcRoot);
+                    Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
+                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                            if (file.toString().endsWith(".java")) {
+                                try {
+                                    analyzeFile(file.toFile());
+                                    fileCount++;
+                                } catch (ParseProblemException e) {
+                                    LOGGER.warn("Exception while analyzing file {}", file, e);
+                                }
                             }
+                            return FileVisitResult.CONTINUE;
                         }
-                        return FileVisitResult.CONTINUE;
-                    }
-                });
-                System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
-            } finally {
-                ObjectMapper mapper = new ObjectMapper();
-                mapper.writerWithDefaultPrettyPrinter().writeValue(new File(outputFile), logStatements);
+
+                        @Override
+                        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                            if (excludes != null) {
+                                for (String exclude : excludes) {
+                                    if (dir.toString().matches(exclude)) {
+                                        return FileVisitResult.SKIP_SUBTREE;
+                                    }
+                                }
+                            }
+                            return FileVisitResult.CONTINUE;
+                        }
+                    });
+                    System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
+                } finally {
+                    ObjectMapper mapper = new ObjectMapper();
+                    mapper.writerWithDefaultPrettyPrinter().writeValue(new File(outputFile), logStatements);
+                }
+            } else {
+                LOGGER.error("Specify a valid src directory: {}", srcRoot);
             }
-        } else {
-            LOGGER.error("Specify a valid src directory: {}", srcRoot);
         }
     }
 
@@ -274,7 +289,8 @@ public class JavaSrcAnalyzer {
             CommandLineParser parser = new DefaultParser();
             CommandLine commandLine = parser.parse(options(), args);
 
-            String srcRoot = commandLine.getOptionValue('s');
+            String srcRootsStr = commandLine.getOptionValue('s');
+            String excludes = commandLine.getOptionValue('e');
             String output = commandLine.getOptionValue('o');
             if (output == null) {
                 output = "patterns.json";
@@ -284,7 +300,8 @@ public class JavaSrcAnalyzer {
                 context = "SIMPLE_NAME";
             }
 
-            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(srcRoot, output, context);
+            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(Arrays.asList(srcRootsStr.split(":")),
+                    excludes != null ? Arrays.asList(excludes.split(":")) : null, output, context);
             srcAnalyzer.analyze();
         } catch (org.apache.commons.cli.ParseException e) {
             System.err.println(e.getMessage());
@@ -293,7 +310,7 @@ public class JavaSrcAnalyzer {
 
     private static Options options() {
         Options options = new Options();
-        options.addRequiredOption("s", "src", true, "Source root directory");
+        options.addRequiredOption("s", "src", true, "Colon separated list of source dirs");
         options.addOption("o", "output", true, "Output file path to write patterns. Default : patterns.json");
         options.addOption("c", "context", true, "Log Context . SIMPLE_NAME | FQN. Default : SIMPLE_NAME");
         options.addOption("e","exclude",true,"Colon separated list of dirs to exclude from analysis");

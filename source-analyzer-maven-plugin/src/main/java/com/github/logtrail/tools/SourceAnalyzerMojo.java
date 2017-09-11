@@ -58,7 +58,7 @@ public class SourceAnalyzerMojo
         throws MojoExecutionException
     {
         try {
-            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(project.getBasedir().getAbsolutePath(),
+            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(project.getCompileSourceRoots(),null,
                     outputFile, context);
             srcAnalyzer.analyze();
         } catch (Exception e) {
