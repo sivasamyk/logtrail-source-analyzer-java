@@ -22,7 +22,7 @@
     <modules>
         <module>source-analyzer</module>
         <module>source-analyzer-maven-plugin</module>
-        <module>sample</module>
+        <module>sample-project</module>
     </modules>
 
     <dependencies>
