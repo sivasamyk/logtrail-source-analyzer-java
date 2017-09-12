@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="INFO">
+    <Appenders>
+        <File name="FILE" fileName="output.log" bufferedIO="false"
+              advertise="false">
+            <PatternLayout pattern="%d{HH:mm:ss.SSS} [%t] %-5level %logger{36} - %msg%n"/>
+        </File>
+    </Appenders>
+    <Loggers>
+        <Logger name="com.github.logtrail" level="INFO" additivity="false">
+            <AppenderRef ref="FILE"/>
+        </Logger>
+        <Root level="error">
+            <AppenderRef ref="FILE"/>
+        </Root>
+    </Loggers>
+</Configuration>

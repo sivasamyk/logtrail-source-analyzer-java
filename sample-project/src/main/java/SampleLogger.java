@@ -14,11 +14,21 @@ public class SampleLogger {
         int n = 42;
         LOGGER.error("This is logger with integer arguments {}", n);
 
-        LOGGER.info("This will be matched : " + "John Smith");
+        LOGGER.info("What is god? : " + n);
+
+        LOGGER.info("This is an example for " + "append log " + getStr() + getMoreStr() + " and this should work!");
         try {
 
         } catch (Exception e) {
             LOGGER.error("This is logger with exception ",e);
         }
+    }
+
+    private static String getStr() {
+        return "with variables";
+    }
+
+    private static String getMoreStr() {
+        return "with more variables";
     }
 }

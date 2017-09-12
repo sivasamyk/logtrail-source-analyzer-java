@@ -20,9 +20,11 @@ e.g. in the below logger statement if `username` evaluates to `John Smith` only 
 LOG.info("User {} is logged in", username)
 ```
 
-* Following logger patterns will **not** be matched (only parameterized logger statement with formatting anchor `{}` will be considered):
+* Following logger statements will be matched:
 
 ```
- LOG.info(log);
- LOG.info("User " + username + " logged in");
+ LOG.info("User logged in");
+ LOG.info("User {} is logged in",username);
+ LOG.info("User {} is logged in from machine {}",username,machine);
+ LOG.info("User " + username + " is logged in from machine " + machine);
 ```

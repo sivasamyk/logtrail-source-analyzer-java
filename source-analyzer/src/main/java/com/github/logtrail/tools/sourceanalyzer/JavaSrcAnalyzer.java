@@ -11,10 +11,7 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
-import com.github.javaparser.ast.expr.Expression;
-import com.github.javaparser.ast.expr.MethodCallExpr;
-import com.github.javaparser.ast.expr.NameExpr;
-import com.github.javaparser.ast.expr.StringLiteralExpr;
+import com.github.javaparser.ast.expr.*;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.SetMultimap;
 import org.apache.commons.cli.CommandLine;
@@ -43,15 +40,17 @@ import java.util.regex.PatternSyntaxException;
  */
 public class JavaSrcAnalyzer {
 
-    private List<String> srcRoots,excludes;
+    private List<String> srcRoots, excludes;
     private String outputFile;
     private static final Set<String> LOG_METHODS = new HashSet<String>();
     private int fileCount = 0, logCount = 0;
     private List<LogStatement> logStatements;
     private static final String REGEX_SPECIAL_CHARS = "[\\<\\(\\[\\\\\\^\\-\\=\\$\\!\\|\\]\\)‌​\\?\\*\\+\\.\\>]";
     private static Logger LOGGER = LoggerFactory.getLogger(JavaSrcAnalyzer.class);
-    private static final Pattern LOG_FORMAT_ELEMENT_PATTERN = Pattern.compile("\\{}");
+    private static final String FORMAT_ANCHOR = "{}";
+    private static final Pattern LOG_FORMAT_ANCHOR_PATTERN = Pattern.compile("\\{}");
     private static final Pattern REGEX_SPECIAL_CHARS_PATTERN = Pattern.compile(REGEX_SPECIAL_CHARS);
+    private static final String DEFAULT_CONTEXT_NAME = "default-context";
     private LogContext context;
 
     static {
@@ -77,7 +76,7 @@ public class JavaSrcAnalyzer {
             if (Files.isDirectory(path)) {
                 try {
                     logStatements = new ArrayList<>();
-                    System.out.println("Walking src" + srcRoot);
+                    System.out.println("Walking src : " + srcRoot);
                     Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
                         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
                             if (file.toString().endsWith(".java")) {
@@ -95,7 +94,7 @@ public class JavaSrcAnalyzer {
                         public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
                             if (excludes != null) {
                                 for (String exclude : excludes) {
-                                    if (dir.toString().matches(exclude)) {
+                                    if (dir.toString().contains(exclude)) {
                                         return FileVisitResult.SKIP_SUBTREE;
                                     }
                                 }
@@ -130,32 +129,74 @@ public class JavaSrcAnalyzer {
 
                 int argCount = methodCallExpr.getArguments().size();
                 if (argCount > 0) {
+                    String message = null;
+                    List<String> args = null;
                     Expression firstArg = methodCallExpr.getArguments().get(0);
                     if (firstArg instanceof StringLiteralExpr) {
-                        String logString = ((StringLiteralExpr) firstArg).asString();
-                        JavaSrcAnalyzer.LogStatement logStatement = new JavaSrcAnalyzer.LogStatement();
-                        try {
-                            logStatement.args = getArgs(methodCallExpr);
-                            logStatement.messageRegEx = convertToRegEx(logString);
-                            String clazz = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
-                            if (context == LogContext.FQN && packageDec.isPresent()) {
-                                clazz = packageDec.get().getNameAsString() + "." + clazz;
-                            }
-                            logStatement.context = clazz;
-                            logStatement.level = methodName;
-                            Optional<MethodDeclaration> method = methodCallExpr.getAncestorOfType(MethodDeclaration.class);
-                            method.ifPresent(methodDeclaration -> logStatement.method = methodDeclaration.getNameAsString());
-                            logStatements.add(logStatement);
-                        } catch (PatternSyntaxException ex) {
-                            LOGGER.warn("Exception while converting regex {} in file {}. Message {}", logString, file, ex.getMessage());
-                        }
-                        logCount++;
+                        message = ((StringLiteralExpr) firstArg).asString();
+                        args = getArgs(methodCallExpr);
+                    } else if (firstArg instanceof BinaryExpr) {
+                        StringBuilder messageBuilder = new StringBuilder();
+                        args = new LinkedList<>();
+                        processBinaryArgs((BinaryExpr) firstArg, messageBuilder, args);
+                        message = messageBuilder.toString();
                     } else {
                         LOGGER.warn("Cannot resolve logger statement {} in file {}", methodCallExpr, file);
                     }
+
+                    if (message != null) {
+                        JavaSrcAnalyzer.LogStatement logStatement = new JavaSrcAnalyzer.LogStatement();
+                        try {
+                            logStatement.messageRegEx = convertToRegEx(message);
+                            if (args != null) {
+                                logStatement.args = convertArgsToMap(args);
+                            }
+
+                        } catch (PatternSyntaxException ex) {
+                            LOGGER.warn("Exception while converting regex {} in file {}. Message {}", message, file, ex.getMessage());
+                        }
+                        logCount++;
+                        String clazz = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
+                        if (clazz != null) {
+                            if (context == LogContext.FQN && packageDec.isPresent()) {
+                                clazz = packageDec.get().getNameAsString() + "." + clazz;
+                            }
+                        }
+
+                        logStatement.context = clazz != null ? clazz : DEFAULT_CONTEXT_NAME;
+                        logStatement.level = methodName;
+                        Optional<MethodDeclaration> method = methodCallExpr.getAncestorOfType(MethodDeclaration.class);
+                        method.ifPresent(methodDeclaration -> logStatement.method = methodDeclaration.getNameAsString());
+                        logStatements.add(logStatement);
+                    }
+
                 } else {
                     LOGGER.debug("logger statement with no args: {} in file {}", methodCallExpr, file);
                 }
+            }
+        }
+    }
+
+    private void processBinaryArgs(BinaryExpr expr, StringBuilder message, List<String> args) {
+        Expression left = expr.getLeft();
+        Expression right = expr.getRight();
+        if (expr.getOperator() == BinaryExpr.Operator.PLUS) {
+            if (left instanceof StringLiteralExpr) {
+                message.append(((StringLiteralExpr) left).asString());
+            } else if (left instanceof BinaryExpr) {
+                processBinaryArgs((BinaryExpr) left, message, args);
+            } else {
+                args.add(left.toString());
+                message.append(FORMAT_ANCHOR);
+            }
+
+            if (right instanceof StringLiteralExpr) {
+                message.append(((StringLiteralExpr) right).asString());
+            } else if (right instanceof BinaryExpr) {
+                processBinaryArgs((BinaryExpr) right, message, args);
+            } else {
+                args.add(right.toString());
+                message.append(FORMAT_ANCHOR);
             }
         }
     }
@@ -174,26 +215,32 @@ public class JavaSrcAnalyzer {
         return classToFieldsMap;
     }
 
-    private Map<String, String> getArgs(MethodCallExpr methodCallExpr) {
-        Map<String, String> args = null;
+    private List<String> getArgs(MethodCallExpr methodCallExpr) {
         NodeList<Expression> argumentList = methodCallExpr.getArguments();
+        List<String> args = new LinkedList<>();
         if (argumentList.size() > 1) {
             for (int i = 1; i < argumentList.size(); i++) {
-                if (args == null) {
-                    args = new LinkedHashMap<>();
-                }
-                args.put("arg" + i, argumentList.get(i).toString());
+                args.add(argumentList.get(i).toString());
             }
         }
         return args;
+    }
+
+    private Map<String, String> convertArgsToMap(List<String> args) {
+        Map<String, String> argsMap = new LinkedHashMap<>();
+        int i = 1;
+        for (String arg : args) {
+            argsMap.put("arg" + i++, arg);
+        }
+        return argsMap;
     }
 
     //Creates regEx pattern from message with named groups
     private Pattern convertToRegEx(String message) {
         String cleanedUpMessage = REGEX_SPECIAL_CHARS_PATTERN.matcher(message).replaceAll("\\\\$0");
         int argCount = 1;
-        while (cleanedUpMessage.contains("{}")) {
-            Matcher matcher = LOG_FORMAT_ELEMENT_PATTERN.matcher(cleanedUpMessage);
+        while (cleanedUpMessage.contains(FORMAT_ANCHOR)) {
+            Matcher matcher = LOG_FORMAT_ANCHOR_PATTERN.matcher(cleanedUpMessage);
             cleanedUpMessage = matcher.replaceFirst("(?<arg" + argCount + ">[\\\\S]+)");
             argCount++;
         }
@@ -203,7 +250,7 @@ public class JavaSrcAnalyzer {
 
     private String getLogDeclarationClass(MethodCallExpr methodCallExpr, SetMultimap<String, String> classToFieldsMap, File file) {
         Optional<Expression> scope = methodCallExpr.getScope();
-        String logClass = "default-context";
+        String logClass = null;
         NameExpr nameExpr = null;
         if (scope.isPresent() && scope.get() instanceof NameExpr) {
             nameExpr = (NameExpr) scope.get();
@@ -215,16 +262,17 @@ public class JavaSrcAnalyzer {
         String varName = nameExpr.getNameAsString();
         Optional<ClassOrInterfaceDeclaration> clazz =
                 methodCallExpr.getAncestorOfType(ClassOrInterfaceDeclaration.class);
-
-        while (true) {
-            Set<String> fields = classToFieldsMap.get(clazz.get().getNameAsString());
-            if (fields.contains(varName)) {
-                logClass = clazz.get().getNameAsString();
-                break;
-            } else {
-                clazz = clazz.get().getAncestorOfType(ClassOrInterfaceDeclaration.class);
-                if (!clazz.isPresent()) {
+        if (clazz.isPresent()) {
+            while (true) {
+                Set<String> fields = classToFieldsMap.get(clazz.get().getNameAsString());
+                if (fields.contains(varName)) {
+                    logClass = clazz.get().getNameAsString();
                     break;
+                } else {
+                    clazz = clazz.get().getAncestorOfType(ClassOrInterfaceDeclaration.class);
+                    if (!clazz.isPresent()) {
+                        break;
+                    }
                 }
             }
         }
@@ -313,7 +361,7 @@ public class JavaSrcAnalyzer {
         options.addRequiredOption("s", "src", true, "Colon separated list of source dirs");
         options.addOption("o", "output", true, "Output file path to write patterns. Default : patterns.json");
         options.addOption("c", "context", true, "Log Context . SIMPLE_NAME | FQN. Default : SIMPLE_NAME");
-        options.addOption("e","exclude",true,"Colon separated list of dirs to exclude from analysis");
+        options.addOption("e", "exclude", true, "Colon separated list of dirs to exclude from analysis");
         return options;
     }
 
