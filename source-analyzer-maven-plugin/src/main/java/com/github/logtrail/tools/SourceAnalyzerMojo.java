@@ -59,7 +59,7 @@ public class SourceAnalyzerMojo
     {
         try {
             JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(project.getCompileSourceRoots(),null,
-                    outputFile, context);
+                    outputFile, context,null);
             srcAnalyzer.analyze();
         } catch (Exception e) {
             getLog().error("Exception while analyzing source",e);

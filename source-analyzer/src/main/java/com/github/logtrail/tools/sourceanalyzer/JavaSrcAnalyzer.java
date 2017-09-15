@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -61,12 +62,23 @@ public class JavaSrcAnalyzer {
         LOG_METHODS.add("error");
     }
 
-    public JavaSrcAnalyzer(List<String> srcRoots, List<String> excludes, String outputFile, String context)
+    public JavaSrcAnalyzer(List<String> srcRoots, List<String> excludes,
+                           String outputFile, String context)
             throws IOException, ParseException {
         this.srcRoots = srcRoots;
         this.excludes = excludes;
         this.outputFile = outputFile;
         this.context = LogContext.valueOf(context);
+    }
+
+    public JavaSrcAnalyzer(Properties properties) {
+        this.srcRoots = Arrays.asList(properties.getProperty("src.roots").split(":"));
+        String excludes = properties.getProperty("src.excludes");
+        if (excludes != null && excludes.trim().length() > 0) {
+            this.excludes = Arrays.asList(excludes.split(":"));
+        }
+        this.outputFile = properties.getProperty("patterns.out.file");
+        this.context = LogContext.valueOf(properties.getProperty("context"));
     }
 
     public void analyze() throws IOException {
@@ -145,11 +157,11 @@ public class JavaSrcAnalyzer {
                     }
 
                     if (message != null) {
-                        JavaSrcAnalyzer.LogStatement logStatement = new JavaSrcAnalyzer.LogStatement();
+                        LogStatement logStatement = new LogStatement();
                         try {
-                            logStatement.messageRegEx = convertToRegEx(message);
+                            logStatement.setMessageRegEx(convertToRegEx(message));
                             if (args != null) {
-                                logStatement.args = convertArgsToMap(args);
+                                logStatement.setArgs(convertArgsToMap(args));
                             }
 
                         } catch (PatternSyntaxException ex) {
@@ -163,10 +175,12 @@ public class JavaSrcAnalyzer {
                             }
                         }
 
-                        logStatement.context = clazz != null ? clazz : DEFAULT_CONTEXT_NAME;
-                        logStatement.level = methodName;
+                        logStatement.setContext(clazz != null ? clazz : DEFAULT_CONTEXT_NAME);
+                        logStatement.setLevel(methodName);
+                        String messageId = String.valueOf((logStatement.getContext() + "-" + logStatement.getMessageRegEx()).hashCode());
+                        logStatement.setMessageId(messageId);
                         Optional<MethodDeclaration> method = methodCallExpr.getAncestorOfType(MethodDeclaration.class);
-                        method.ifPresent(methodDeclaration -> logStatement.method = methodDeclaration.getNameAsString());
+                        method.ifPresent(methodDeclaration -> logStatement.setMethod(methodDeclaration.getNameAsString()));
                         logStatements.add(logStatement);
                     }
 
@@ -250,7 +264,7 @@ public class JavaSrcAnalyzer {
 
     private String getLogDeclarationClass(MethodCallExpr methodCallExpr, SetMultimap<String, String> classToFieldsMap, File file) {
         Optional<Expression> scope = methodCallExpr.getScope();
-        String logClass = null;
+        String logClass = DEFAULT_CONTEXT_NAME;
         NameExpr nameExpr = null;
         if (scope.isPresent() && scope.get() instanceof NameExpr) {
             nameExpr = (NameExpr) scope.get();
@@ -279,78 +293,49 @@ public class JavaSrcAnalyzer {
         return logClass;
     }
 
-    static class LogStatement {
-        private Pattern messageRegEx;
-        private String context;
-        private String level;
-        private String method;
-        private Map<String, String> args;
-
-        public Pattern getMessageRegEx() {
-            return messageRegEx;
-        }
-
-        public void setMessageRegEx(Pattern messageRegEx) {
-            this.messageRegEx = messageRegEx;
-        }
-
-        public String getContext() {
-            return context;
-        }
-
-        public void setContext(String context) {
-            this.context = context;
-        }
-
-        public String getLevel() {
-            return level;
-        }
-
-        public void setLevel(String level) {
-            this.level = level;
-        }
-
-        public String getMethod() {
-            return method;
-        }
-
-        public void setMethod(String method) {
-            this.method = method;
-        }
-
-        public Map<String, String> getArgs() {
-            return args;
-        }
-
-        public void setArgs(Map<String, String> args) {
-            this.args = args;
-        }
-
-        public String toString() {
-            return this.context + "|" + this.messageRegEx.pattern();
-        }
-
-    }
-
     public static void main(String args[]) throws Exception {
         try {
             CommandLineParser parser = new DefaultParser();
             CommandLine commandLine = parser.parse(options(), args);
 
-            String srcRootsStr = commandLine.getOptionValue('s');
-            String excludes = commandLine.getOptionValue('e');
-            String output = commandLine.getOptionValue('o');
-            if (output == null) {
-                output = "patterns.json";
-            }
-            String context = commandLine.getOptionValue('c');
-            if (context == null) {
-                context = "SIMPLE_NAME";
+            if (commandLine.hasOption("f")) {
+                String configPath = commandLine.getOptionValue('f');
+                Properties config = new Properties();
+                config.load(new FileInputStream(configPath));
+                JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(config);
+                srcAnalyzer.analyze();
+                String elasticsearchUrl = config.getProperty("elasticsearch.url");
+                if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
+                    ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
+                    elasticOutput.init();
+                    elasticOutput.deletePatternsType(); //delete existing patterns on every run..
+                    elasticOutput.writeDocuments(srcAnalyzer.logStatements);
+                    elasticOutput.cleanup();
+                }
             }
 
-            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(Arrays.asList(srcRootsStr.split(":")),
-                    excludes != null ? Arrays.asList(excludes.split(":")) : null, output, context);
-            srcAnalyzer.analyze();
+//            String srcRootsStr = commandLine.getOptionValue('s');
+//            String excludes = commandLine.getOptionValue('e');
+//            String output = commandLine.getOptionValue('o');
+//            if (output == null) {
+//                output = "patterns.json";
+//            }
+//            String context = commandLine.getOptionValue('c');
+//            if (context == null) {
+//                context = "SIMPLE_NAME";
+//            }
+//
+//            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(Arrays.asList(srcRootsStr.split(":")),
+//                    excludes != null ? Arrays.asList(excludes.split(":")) : null, output, context,
+//                    commandLine.getOptionValue('h'));
+//            srcAnalyzer.analyze();
+//            String elasticUrl = commandLine.getOptionValue('h');
+//            if (elasticUrl != null) {
+//                ElasticOutput elasticOutput = new ElasticOutput(elasticUrl);
+//                elasticOutput.init();
+//                elasticOutput.writeDocuments(srcAnalyzer.logStatements);
+//                elasticOutput.cleanup();
+//            }
         } catch (org.apache.commons.cli.ParseException e) {
             System.err.println(e.getMessage());
         }
@@ -358,10 +343,13 @@ public class JavaSrcAnalyzer {
 
     private static Options options() {
         Options options = new Options();
-        options.addRequiredOption("s", "src", true, "Colon separated list of source dirs");
-        options.addOption("o", "output", true, "Output file path to write patterns. Default : patterns.json");
-        options.addOption("c", "context", true, "Log Context . SIMPLE_NAME | FQN. Default : SIMPLE_NAME");
-        options.addOption("e", "exclude", true, "Colon separated list of dirs to exclude from analysis");
+        options.addRequiredOption("f","config",true,"Path to configuration properties file");
+//
+//        options.addRequiredOption("s", "src", true, "Colon separated list of source dirs");
+//        options.addOption("o", "output", true, "Output file path to write patterns. Default : patterns.json");
+//        options.addOption("c", "context", true, "Log Context . SIMPLE_NAME | FQN. Default : SIMPLE_NAME");
+//        options.addOption("e", "exclude", true, "Colon separated list of dirs to exclude from analysis");
+//        options.addOption("h", "elasticsearch", true, "Elasticsearch connection URL");
         return options;
     }
 
