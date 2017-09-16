@@ -26,6 +26,7 @@
         <module>source-analyzer</module>
         <module>source-analyzer-maven-plugin</module>
         <module>sample-project</module>
+        <module>logstash-filter</module>
     </modules>
 
     <dependencies>

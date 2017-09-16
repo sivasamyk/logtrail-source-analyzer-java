@@ -20,8 +20,8 @@ import java.util.Map;
  * Created by skaliappan on 9/14/17.
  */
 public class ElasticOutput {
-    private final String INDEX_NAME = ".logtrail";
-    private final String PATTERNS_ENDPOINT = INDEX_NAME + "/" + "patterns";
+    private final String INDEX_NAME = ".logtrail_patterns";
+    private final String PATTERNS_ENDPOINT = "/" + INDEX_NAME + "/" + "patterns";
     private RestClient elasticClient;
     private static final Logger LOGGER = LoggerFactory.getLogger(ElasticOutput.class);
 
@@ -60,8 +60,8 @@ public class ElasticOutput {
         return response.getStatusLine().getStatusCode() == HttpStatus.SC_OK;
     }
 
-    public boolean deletePatternsType() throws IOException {
-        Response response = elasticClient.performRequest("DELETE", PATTERNS_ENDPOINT);
+    public boolean deletePatternsIndex() throws IOException {
+        Response response = elasticClient.performRequest("DELETE", INDEX_NAME);
         return response.getStatusLine().getStatusCode() == HttpStatus.SC_OK;
     }
 

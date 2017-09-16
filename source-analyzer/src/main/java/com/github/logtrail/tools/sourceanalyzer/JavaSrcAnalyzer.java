@@ -308,7 +308,7 @@ public class JavaSrcAnalyzer {
                 if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
                     ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
                     elasticOutput.init();
-                    elasticOutput.deletePatternsType(); //delete existing patterns on every run..
+                    elasticOutput.deletePatternsIndex(); //delete existing patterns on every run..
                     elasticOutput.writeDocuments(srcAnalyzer.logStatements);
                     elasticOutput.cleanup();
                 }
