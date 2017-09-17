@@ -306,6 +306,9 @@ public class JavaSrcAnalyzer {
                 srcAnalyzer.analyze();
                 String elasticsearchUrl = config.getProperty("elasticsearch.url");
                 if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
+                    int patternCount = srcAnalyzer.logStatements.size();
+                    LOGGER.info("Writing {} patterns to ES", patternCount);
+                    System.out.println("Writing " + patternCount + " patterns to ES");
                     ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
                     elasticOutput.init();
                     elasticOutput.deletePatternsIndex(); //delete existing patterns on every run..
@@ -313,29 +316,6 @@ public class JavaSrcAnalyzer {
                     elasticOutput.cleanup();
                 }
             }
-
-//            String srcRootsStr = commandLine.getOptionValue('s');
-//            String excludes = commandLine.getOptionValue('e');
-//            String output = commandLine.getOptionValue('o');
-//            if (output == null) {
-//                output = "patterns.json";
-//            }
-//            String context = commandLine.getOptionValue('c');
-//            if (context == null) {
-//                context = "SIMPLE_NAME";
-//            }
-//
-//            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(Arrays.asList(srcRootsStr.split(":")),
-//                    excludes != null ? Arrays.asList(excludes.split(":")) : null, output, context,
-//                    commandLine.getOptionValue('h'));
-//            srcAnalyzer.analyze();
-//            String elasticUrl = commandLine.getOptionValue('h');
-//            if (elasticUrl != null) {
-//                ElasticOutput elasticOutput = new ElasticOutput(elasticUrl);
-//                elasticOutput.init();
-//                elasticOutput.writeDocuments(srcAnalyzer.logStatements);
-//                elasticOutput.cleanup();
-//            }
         } catch (org.apache.commons.cli.ParseException e) {
             System.err.println(e.getMessage());
         }
@@ -343,13 +323,7 @@ public class JavaSrcAnalyzer {
 
     private static Options options() {
         Options options = new Options();
-        options.addRequiredOption("f","config",true,"Path to configuration properties file");
-//
-//        options.addRequiredOption("s", "src", true, "Colon separated list of source dirs");
-//        options.addOption("o", "output", true, "Output file path to write patterns. Default : patterns.json");
-//        options.addOption("c", "context", true, "Log Context . SIMPLE_NAME | FQN. Default : SIMPLE_NAME");
-//        options.addOption("e", "exclude", true, "Colon separated list of dirs to exclude from analysis");
-//        options.addOption("h", "elasticsearch", true, "Elasticsearch connection URL");
+        options.addRequiredOption("f", "config", true, "Path to configuration properties file");
         return options;
     }
 

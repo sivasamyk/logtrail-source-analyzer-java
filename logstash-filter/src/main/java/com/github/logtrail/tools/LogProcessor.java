@@ -1,9 +1,11 @@
 package com.github.logtrail.tools;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpStatus;
-import org.apache.http.protocol.HTTP;
 import org.apache.http.util.EntityUtils;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
@@ -21,7 +23,7 @@ import java.util.regex.Pattern;
 public class LogProcessor {
     private RestClient elasticClient;
     private Map<String, List<LogPattern>> contextToPatternsMap;
-    private static final String PATTERN_SEARCH_ENDPOINT = ".logtrail_patterns/_search?type=patterns";
+    private static final String PATTERN_SEARCH_ENDPOINT = ".logtrail_patterns/_search?type=patterns&size=2000";
     private static final Logger LOGGER = LoggerFactory.getLogger(LogProcessor.class);
 
     public LogProcessor(String[] esHosts) {
@@ -35,7 +37,7 @@ public class LogProcessor {
 
     public void init() {
         List<LogPattern> patterns = fetchLogStatements();
-        LOGGER.info("Fetched {} from elasticsearch server", patterns.size());
+        LOGGER.info("Fetched {} patterns from elasticsearch server", patterns.size());
 
         //populate map
         contextToPatternsMap = new HashMap<>();
@@ -55,16 +57,14 @@ public class LogProcessor {
             Response response = elasticClient.performRequest("GET", PATTERN_SEARCH_ENDPOINT);
             if (response.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
                 ObjectMapper objectMapper = new ObjectMapper();
-                Map<String, Object> result = objectMapper.readValue(EntityUtils.toString(response.getEntity()),
-                        Map.class);
-                List<Map> hits = (List) ((Map) result.get("hits")).get("hits");
-                for (Map<String, Object> hit : hits) {
-                    LogPattern pattern = new LogPattern();
-                    Map<String, Object> source = (Map) hit.get("_source");
-                    pattern.setId(hit.get("_id").toString());
-                    pattern.setMessageRegEx(source.get("messageRegEx").toString());
-                    pattern.setContext(source.get("context").toString());
-                    pattern.setArgs((Map<String, String>) source.get("args"));
+                objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+                ResponseHits responseHits = objectMapper.readValue(EntityUtils.toString(response.getEntity()),
+                        ResponseHits.class);
+                List<Hit> hits = responseHits.hits.hits;
+                for (Hit hit : hits) {
+                    LogPattern pattern = hit.source;
+                    //set id to doc id
+                    pattern.setId(hit.id);
                     patterns.add(pattern);
                 }
             }
@@ -74,8 +74,8 @@ public class LogProcessor {
         return patterns;
     }
 
-    public Map<String, String> process(String message, String context) {
-        Map<String, String> parsedInfo = null;
+    public Map<String, Object> process(String message, String context) {
+        Map<String, Object> parsedInfo = null;
         List<LogPattern> patternsForContext = contextToPatternsMap.get(context);
         if (patternsForContext == null) {
             patternsForContext = contextToPatternsMap.get("default-context");
@@ -86,15 +86,14 @@ public class LogProcessor {
                 if (matcher.matches()) {
                     parsedInfo = new LinkedHashMap<>();
                     parsedInfo.put("patternId", pattern.getId());
-                    StringBuilder matchIndices = new StringBuilder();
+                    List<Integer> matchIndices = new ArrayList<>();
                     for (int i = 1; i <= matcher.groupCount(); i++) {
                         parsedInfo.put("a" + i, matcher.group(i));
-                        matchIndices.append(matcher.start(i)).append(",")
-                                .append(matcher.end(i)).append(":");
+                        matchIndices.add(matcher.start(i));
+                        matchIndices.add(matcher.end(i));
                     }
                     if (matcher.groupCount() > 0) {
-                        matchIndices.deleteCharAt(matchIndices.length() - 1);
-                        parsedInfo.put("matchIndices", matchIndices.toString());
+                        parsedInfo.put("matchIndices", matchIndices);
                     }
                 }
             }
@@ -110,6 +109,86 @@ public class LogProcessor {
         }
     }
 
+    public static class ResponseHits {
+        private Hits hits;
+
+        public Hits getHits() {
+            return hits;
+        }
+
+        public void setHits(Hits hits) {
+            this.hits = hits;
+        }
+    }
+    public static class Hits {
+        private List<Hit> hits;
+
+        public List<Hit> getHits() {
+            return hits;
+        }
+
+        public void setHits(List<Hit> hits) {
+            this.hits = hits;
+        }
+    }
+    public static class Hit {
+        @JsonProperty(value = "_index")
+        private String index;
+
+        @JsonProperty(value = "_type")
+        private String type;
+
+        @JsonProperty(value = "_id")
+        private String id;
+
+        @JsonProperty(value = "_score")
+        private Double score;
+
+        @JsonProperty(value = "_source")
+        private LogPattern source;
+
+        public String getIndex() {
+            return index;
+        }
+
+        public void setIndex(String index) {
+            this.index = index;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        public String getId() {
+            return id;
+        }
+
+        public void setId(String id) {
+            this.id = id;
+        }
+
+        public Double getScore() {
+            return score;
+        }
+
+        public void setScore(Double score) {
+            this.score = score;
+        }
+
+        public LogPattern getSource() {
+            return source;
+        }
+
+        public void setSource(LogPattern source) {
+            this.source = source;
+        }
+    }
+
+    @JsonIgnoreProperties
     private static class LogPattern {
         private Pattern messageRegEx;
         private Map<String, String> args;
@@ -153,8 +232,8 @@ public class LogProcessor {
     public static void main(String args[]) {
         LogProcessor logProcessor = new LogProcessor(new String[]{"http://localhost:9200"});
         logProcessor.init();
-        System.out.println(logProcessor.process("This is a sample log without arguments", "SampleLogger"));
-        System.out.println(logProcessor.process("This is logger with string arguments Hello", "SampleLogger"));
+        System.out.println(logProcessor.process("Failed while trying to create a new session", "org.apache.zookeeper.server.jersey.resources.SessionsResource"));
+        System.out.println(logProcessor.process("Closed socket connection for client /10.196.68.149:35705 which had sessionid 0x2384135ffe302b5", "org.apache.zookeeper.server.NIOServerCnxn"));
         logProcessor.cleanup();
     }
 }
