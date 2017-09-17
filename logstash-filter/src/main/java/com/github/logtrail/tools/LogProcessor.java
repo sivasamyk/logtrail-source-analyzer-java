@@ -3,6 +3,7 @@ package com.github.logtrail.tools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpStatus;
+import org.apache.http.protocol.HTTP;
 import org.apache.http.util.EntityUtils;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
@@ -23,10 +24,13 @@ public class LogProcessor {
     private static final String PATTERN_SEARCH_ENDPOINT = ".logtrail_patterns/_search?type=patterns";
     private static final Logger LOGGER = LoggerFactory.getLogger(LogProcessor.class);
 
-    public LogProcessor(String elasticsearchUrl) {
-
+    public LogProcessor(String[] esHosts) {
+        List<HttpHost> hosts = new ArrayList<>();
+        for (String esHost : esHosts) {
+            hosts.add(HttpHost.create(esHost));
+        }
         elasticClient = RestClient.builder(
-                HttpHost.create(elasticsearchUrl)).build();
+                hosts.toArray(new HttpHost[1])).build();
     }
 
     public void init() {
@@ -34,7 +38,7 @@ public class LogProcessor {
         LOGGER.info("Fetched {} from elasticsearch server", patterns.size());
 
         //populate map
-        contextToPatternsMap = new HashMap<String, List<LogPattern>>();
+        contextToPatternsMap = new HashMap<>();
         for (LogPattern pattern : patterns) {
             List<LogPattern> patternsForContext = contextToPatternsMap.get(pattern.getContext());
             if (patternsForContext == null) {
@@ -81,10 +85,10 @@ public class LogProcessor {
                 Matcher matcher = pattern.getMessageRegEx().matcher(message);
                 if (matcher.matches()) {
                     parsedInfo = new LinkedHashMap<>();
-                    parsedInfo.put("patternId",pattern.getId());
+                    parsedInfo.put("patternId", pattern.getId());
                     StringBuilder matchIndices = new StringBuilder();
                     for (int i = 1; i <= matcher.groupCount(); i++) {
-                        parsedInfo.put("a" + i,matcher.group(i));
+                        parsedInfo.put("a" + i, matcher.group(i));
                         matchIndices.append(matcher.start(i)).append(",")
                                 .append(matcher.end(i)).append(":");
                     }
@@ -147,7 +151,7 @@ public class LogProcessor {
     }
 
     public static void main(String args[]) {
-        LogProcessor logProcessor = new LogProcessor("http://localhost:9200");
+        LogProcessor logProcessor = new LogProcessor(new String[]{"http://localhost:9200"});
         logProcessor.init();
         System.out.println(logProcessor.process("This is a sample log without arguments", "SampleLogger"));
         System.out.println(logProcessor.process("This is logger with string arguments Hello", "SampleLogger"));
