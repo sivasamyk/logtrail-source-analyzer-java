@@ -1,14 +1,13 @@
 package com.github.logtrail.tools;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.http.HttpHost;
-import org.apache.http.HttpStatus;
-import org.apache.http.util.EntityUtils;
-import org.elasticsearch.client.Response;
-import org.elasticsearch.client.RestClient;
+import io.searchbox.client.JestClient;
+import io.searchbox.client.JestClientFactory;
+import io.searchbox.client.JestResult;
+import io.searchbox.client.config.HttpClientConfig;
+import io.searchbox.core.Search;
+import io.searchbox.core.SearchResult;
+import io.searchbox.core.SearchScroll;
+import io.searchbox.params.Parameters;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,18 +20,18 @@ import java.util.regex.Pattern;
  * Created by skaliappan on 9/15/17.
  */
 public class LogProcessor {
-    private RestClient elasticClient;
+    private JestClient elasticClient;
     private Map<String, List<LogPattern>> contextToPatternsMap;
-    private static final String PATTERN_SEARCH_ENDPOINT = ".logtrail_patterns/_search?type=patterns&size=2000";
+    private final String INDEX_NAME = ".logtrail-patterns";
+    private final String TYPE_NAME = "patterns";
     private static final Logger LOGGER = LoggerFactory.getLogger(LogProcessor.class);
 
     public LogProcessor(String[] esHosts) {
-        List<HttpHost> hosts = new ArrayList<>();
-        for (String esHost : esHosts) {
-            hosts.add(HttpHost.create(esHost));
-        }
-        elasticClient = RestClient.builder(
-                hosts.toArray(new HttpHost[1])).build();
+        JestClientFactory factory = new JestClientFactory();
+        factory.setHttpClientConfig(new HttpClientConfig
+                .Builder(esHosts[0])
+                .multiThreaded(true).build());
+        elasticClient = factory.getObject();
     }
 
     public void init() {
@@ -54,25 +53,42 @@ public class LogProcessor {
     private List<LogPattern> fetchLogStatements() {
         List<LogPattern> patterns = new ArrayList<>();
         try {
-            Response response = elasticClient.performRequest("GET", PATTERN_SEARCH_ENDPOINT);
-            if (response.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
-                ObjectMapper objectMapper = new ObjectMapper();
-                objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-                ResponseHits responseHits = objectMapper.readValue(EntityUtils.toString(response.getEntity()),
-                        ResponseHits.class);
-                List<Hit> hits = responseHits.hits.hits;
-                for (Hit hit : hits) {
-                    LogPattern pattern = hit.source;
-                    //set id to doc id
-                    pattern.setId(hit.id);
-                    patterns.add(pattern);
+            String matchAllQuery = "{\n" +
+                    "    \"query\": {\n" +
+                    "        \"match_all\": {}\n" +
+                    "    }\n" +
+                    "}";
+            Search search = new Search.Builder(matchAllQuery).addIndex(INDEX_NAME).addType(TYPE_NAME)
+                    .setParameter(Parameters.SCROLL, "1m")
+                    .setParameter(Parameters.SIZE, 1000)
+                    .build();
+            SearchResult searchResult = elasticClient.execute(search);
+            String scrollId = searchResult.getJsonObject().get("_scroll_id").getAsString();
+            if (searchResult.isSucceeded()) {
+                List<SearchResult.Hit<LogPattern, Void>> hits = searchResult.getHits(LogPattern.class);
+                for (SearchResult.Hit<LogPattern, Void> hit : hits) {
+                    patterns.add(hit.source);
                 }
+            }
+
+            while (scrollId != null) {
+                SearchScroll scroll = new SearchScroll.Builder(scrollId, "5m").build();
+                JestResult scrollResult = elasticClient.execute(scroll);
+                if (scrollResult.isSucceeded()) {
+                    List<LogPattern> logStatements = scrollResult.getSourceAsObjectList(LogPattern.class);
+                    if (logStatements.size() == 0) {
+                        break;
+                    }
+                    patterns.addAll(logStatements);
+                }
+                scrollId = scrollResult.getJsonObject().get("_scroll_id").getAsString();
             }
         } catch (IOException e) {
             LOGGER.error("Exception while fetching patterns ", e);
         }
         return patterns;
     }
+
 
     public Map<String, Object> process(String message, String context) {
         Map<String, Object> parsedInfo = null;
@@ -82,7 +98,7 @@ public class LogProcessor {
         }
         if (patternsForContext != null) {
             for (LogPattern pattern : patternsForContext) {
-                Matcher matcher = pattern.getMessageRegEx().matcher(message);
+                Matcher matcher = pattern.getPattern().matcher(message);
                 if (matcher.matches()) {
                     parsedInfo = new LinkedHashMap<>();
                     parsedInfo.put("patternId", pattern.getId());
@@ -102,112 +118,30 @@ public class LogProcessor {
     }
 
     public void cleanup() {
-        try {
-            elasticClient.close();
-        } catch (IOException e) {
-            LOGGER.error("Exception while closing ES", e);
-        }
+        elasticClient.shutdownClient();
     }
 
-    public static class ResponseHits {
-        private Hits hits;
-
-        public Hits getHits() {
-            return hits;
-        }
-
-        public void setHits(Hits hits) {
-            this.hits = hits;
-        }
-    }
-    public static class Hits {
-        private List<Hit> hits;
-
-        public List<Hit> getHits() {
-            return hits;
-        }
-
-        public void setHits(List<Hit> hits) {
-            this.hits = hits;
-        }
-    }
-    public static class Hit {
-        @JsonProperty(value = "_index")
-        private String index;
-
-        @JsonProperty(value = "_type")
-        private String type;
-
-        @JsonProperty(value = "_id")
-        private String id;
-
-        @JsonProperty(value = "_score")
-        private Double score;
-
-        @JsonProperty(value = "_source")
-        private LogPattern source;
-
-        public String getIndex() {
-            return index;
-        }
-
-        public void setIndex(String index) {
-            this.index = index;
-        }
-
-        public String getType() {
-            return type;
-        }
-
-        public void setType(String type) {
-            this.type = type;
-        }
-
-        public String getId() {
-            return id;
-        }
-
-        public void setId(String id) {
-            this.id = id;
-        }
-
-        public Double getScore() {
-            return score;
-        }
-
-        public void setScore(Double score) {
-            this.score = score;
-        }
-
-        public LogPattern getSource() {
-            return source;
-        }
-
-        public void setSource(LogPattern source) {
-            this.source = source;
-        }
-    }
-
-    @JsonIgnoreProperties
     private static class LogPattern {
-        private Pattern messageRegEx;
-        private Map<String, String> args;
+        private String messageRegEx;
+        private List<String> args;
         private String context;
         private String id;
+        private Pattern pattern;
 
-        public Pattern getMessageRegEx() {
+        public String getMessageRegEx() {
             return messageRegEx;
         }
 
         public void setMessageRegEx(String messageRegEx) {
-            this.messageRegEx = Pattern.compile(messageRegEx);
+            this.messageRegEx = messageRegEx;
+            pattern = Pattern.compile(messageRegEx);
         }
 
-        public Map<String, String> getArgs() {
+        public List<String> getArgs() {
             return args;
         }
 
-        public void setArgs(Map<String, String> args) {
+        public void setArgs(List<String> args) {
             this.args = args;
         }
 
@@ -227,6 +161,9 @@ public class LogProcessor {
             this.id = id;
         }
 
+        public Pattern getPattern() {
+            return pattern;
+        }
     }
 
     public static void main(String args[]) {

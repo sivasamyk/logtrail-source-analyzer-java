@@ -1,6 +1,5 @@
 package com.github.logtrail.tools.sourceanalyzer;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseException;
 import com.github.javaparser.ParseProblemException;
@@ -14,6 +13,8 @@ import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.*;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.SetMultimap;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
 import org.apache.commons.cli.DefaultParser;
@@ -23,6 +24,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -116,8 +118,8 @@ public class JavaSrcAnalyzer {
                     });
                     System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
                 } finally {
-                    ObjectMapper mapper = new ObjectMapper();
-                    mapper.writerWithDefaultPrettyPrinter().writeValue(new File(outputFile), logStatements);
+                    Gson gson = new GsonBuilder().create();
+                    gson.toJson(logStatements, new FileWriter(outputFile, false));
                 }
             } else {
                 LOGGER.error("Specify a valid src directory: {}", srcRoot);
@@ -161,7 +163,7 @@ public class JavaSrcAnalyzer {
                         try {
                             logStatement.setMessageRegEx(convertToRegEx(message));
                             if (args != null) {
-                                logStatement.setArgs(convertArgsToMap(args));
+                                logStatement.setArgs(args);
                             }
 
                         } catch (PatternSyntaxException ex) {
@@ -240,17 +242,17 @@ public class JavaSrcAnalyzer {
         return args;
     }
 
-    private Map<String, String> convertArgsToMap(List<String> args) {
-        Map<String, String> argsMap = new LinkedHashMap<>();
-        int i = 1;
-        for (String arg : args) {
-            argsMap.put("arg" + i++, arg);
-        }
-        return argsMap;
-    }
+//    private Map<String, String> convertArgsToMap(List<String> args) {
+//        Map<String, String> argsMap = new LinkedHashMap<>();
+//        int i = 1;
+//        for (String arg : args) {
+//            argsMap.put("arg" + i++, arg);
+//        }
+//        return argsMap;
+//    }
 
     //Creates regEx pattern from message with named groups
-    private Pattern convertToRegEx(String message) {
+    private String convertToRegEx(String message) {
         String cleanedUpMessage = REGEX_SPECIAL_CHARS_PATTERN.matcher(message).replaceAll("\\\\$0");
         int argCount = 1;
         while (cleanedUpMessage.contains(FORMAT_ANCHOR)) {
@@ -258,7 +260,8 @@ public class JavaSrcAnalyzer {
             cleanedUpMessage = matcher.replaceFirst("(?<arg" + argCount + ">[\\\\S]+)");
             argCount++;
         }
-        return Pattern.compile(cleanedUpMessage);
+        //Compile to make sure we have a valid pattern.
+        return Pattern.compile(cleanedUpMessage).pattern();
     }
 
 
@@ -308,7 +311,7 @@ public class JavaSrcAnalyzer {
                 if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
                     int patternCount = srcAnalyzer.logStatements.size();
                     LOGGER.info("Writing {} patterns to ES", patternCount);
-                    System.out.println("Writing " + patternCount + " patterns to ES");
+                    System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
                     ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
                     elasticOutput.init();
                     elasticOutput.deletePatternsIndex(); //delete existing patterns on every run..

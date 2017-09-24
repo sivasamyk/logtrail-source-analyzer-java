@@ -1,5 +1,6 @@
 package com.github.logtrail.tools.sourceanalyzer;
 
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -7,18 +8,18 @@ import java.util.regex.Pattern;
 * Created by skaliappan on 9/14/17.
 */
 public class LogStatement {
-    private Pattern messageRegEx;
+    private String messageRegEx;
     private String context;
     private String level;
     private String method;
     private String messageId; // To be removed
-    private Map<String, String> args;
+    private List<String> args;
 
-    public Pattern getMessageRegEx() {
+    public String getMessageRegEx() {
         return messageRegEx;
     }
 
-    public void setMessageRegEx(Pattern messageRegEx) {
+    public void setMessageRegEx(String messageRegEx) {
         this.messageRegEx = messageRegEx;
     }
 
@@ -46,16 +47,16 @@ public class LogStatement {
         this.method = method;
     }
 
-    public Map<String, String> getArgs() {
+    public List<String> getArgs() {
         return args;
     }
 
-    public void setArgs(Map<String, String> args) {
+    public void setArgs(List<String> args) {
         this.args = args;
     }
 
     public String toString() {
-        return this.context + "|" + this.messageRegEx.pattern();
+        return this.context + "|" + this.messageRegEx;
     }
 
     public String getMessageId() {
