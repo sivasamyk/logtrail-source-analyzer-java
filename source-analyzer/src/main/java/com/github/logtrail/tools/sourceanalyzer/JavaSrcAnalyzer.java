@@ -300,24 +300,26 @@ public class JavaSrcAnalyzer {
         try {
             CommandLineParser parser = new DefaultParser();
             CommandLine commandLine = parser.parse(options(), args);
+            String configPath = "conf/config.properties";
 
             if (commandLine.hasOption("f")) {
-                String configPath = commandLine.getOptionValue('f');
-                Properties config = new Properties();
-                config.load(new FileInputStream(configPath));
-                JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(config);
-                srcAnalyzer.analyze();
-                String elasticsearchUrl = config.getProperty("elasticsearch.url");
-                if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
-                    int patternCount = srcAnalyzer.logStatements.size();
-                    LOGGER.info("Writing {} patterns to ES", patternCount);
-                    System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
-                    ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
-                    elasticOutput.init();
-                    elasticOutput.deletePatternsIndex(); //delete existing patterns on every run..
-                    elasticOutput.writeDocuments(srcAnalyzer.logStatements);
-                    elasticOutput.cleanup();
-                }
+                commandLine.getOptionValue('f');
+            }
+
+            Properties config = new Properties();
+            config.load(new FileInputStream(configPath));
+            JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(config);
+            srcAnalyzer.analyze();
+            String elasticsearchUrl = config.getProperty("elasticsearch.url");
+            if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
+                int patternCount = srcAnalyzer.logStatements.size();
+                LOGGER.info("Writing {} patterns to ES", patternCount);
+                System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
+                ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
+                elasticOutput.init();
+                elasticOutput.deletePatternsIndex(); //delete existing patterns on every run..
+                elasticOutput.writeDocuments(srcAnalyzer.logStatements);
+                elasticOutput.cleanup();
             }
         } catch (org.apache.commons.cli.ParseException e) {
             System.err.println(e.getMessage());
