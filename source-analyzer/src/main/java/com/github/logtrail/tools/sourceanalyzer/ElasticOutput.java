@@ -25,8 +25,8 @@ import java.util.Map;
  * Created by skaliappan on 9/14/17.
  */
 public class ElasticOutput {
-    private final String INDEX_NAME = ".logtrail-patterns";
-    private final String TYPE_NAME = "patterns";
+    private final String INDEX_NAME = ".logtrail";
+    private final String TYPE_NAME = "pattern";
     private JestClient elasticClient;
     private static final Logger LOGGER = LoggerFactory.getLogger(ElasticOutput.class);
     private Map<String,LogStatement> logStatementsMap;
@@ -48,6 +48,7 @@ public class ElasticOutput {
             }
         } else {
             List<LogStatement> statementList = fetchLogStatements();
+            LOGGER.info("Fetched {} patterns from ES", statementList.size());
             logStatementsMap = new HashMap<>();
             for(LogStatement logStatement : statementList) {
                 logStatementsMap.put(logStatement.getMessageId(), logStatement);
@@ -86,7 +87,7 @@ public class ElasticOutput {
             }
 
             while (scrollId != null) {
-                SearchScroll scroll = new SearchScroll.Builder(scrollId, "5m").build();
+                SearchScroll scroll = new SearchScroll.Builder(scrollId, "1m").build();
                 JestResult scrollResult = elasticClient.execute(scroll);
                 if (scrollResult.isSucceeded()) {
                     List<LogStatement> logStatements = scrollResult.getSourceAsObjectList(LogStatement.class);

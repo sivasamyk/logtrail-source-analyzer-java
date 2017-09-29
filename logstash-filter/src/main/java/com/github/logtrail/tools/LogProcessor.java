@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Created by skaliappan on 9/15/17.
@@ -66,9 +67,7 @@ public class LogProcessor {
             String scrollId = searchResult.getJsonObject().get("_scroll_id").getAsString();
             if (searchResult.isSucceeded()) {
                 List<SearchResult.Hit<LogPattern, Void>> hits = searchResult.getHits(LogPattern.class);
-                for (SearchResult.Hit<LogPattern, Void> hit : hits) {
-                    patterns.add(hit.source);
-                }
+                patterns.addAll(hits.stream().map(hit -> hit.source).collect(Collectors.toList()));
             }
 
             while (scrollId != null) {

@@ -303,7 +303,7 @@ public class JavaSrcAnalyzer {
             String configPath = "conf/config.properties";
 
             if (commandLine.hasOption("f")) {
-                commandLine.getOptionValue('f');
+                configPath = commandLine.getOptionValue('f');
             }
 
             Properties config = new Properties();
@@ -317,7 +317,6 @@ public class JavaSrcAnalyzer {
                 System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
                 ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
                 elasticOutput.init();
-                elasticOutput.deletePatternsIndex(); //delete existing patterns on every run..
                 elasticOutput.writeDocuments(srcAnalyzer.logStatements);
                 elasticOutput.cleanup();
             }
