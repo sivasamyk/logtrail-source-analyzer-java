@@ -9,6 +9,7 @@ import io.searchbox.core.Search;
 import io.searchbox.core.SearchResult;
 import io.searchbox.core.SearchScroll;
 import io.searchbox.params.Parameters;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -128,16 +129,50 @@ public class LogProcessor {
                 parsedInfo.put("patternId", pattern.getId());
                 List<Integer> matchIndices = new ArrayList<>();
                 for (int i = 1; i <= matcher.groupCount(); i++) {
-                    parsedInfo.put("a" + i, matcher.group(i));
+                    String argName = convertToFieldName(pattern.args.get(i - 1),
+                            extractClassName(pattern.getContext()));
+                    String value = matcher.group(i);
+                    if (NumberUtils.isNumber(value)) {
+                        Number number = NumberUtils.createNumber(value);
+                        parsedInfo.put(argName, number);
+                    } else {
+                        parsedInfo.put(argName, value);
+                    }
                     matchIndices.add(matcher.start(i));
                     matchIndices.add(matcher.end(i));
                 }
                 if (matcher.groupCount() > 0) {
                     parsedInfo.put("matchIndices", matchIndices);
                 }
+                break;
             }
         }
         return parsedInfo;
+    }
+
+    private String extractClassName(String context) {
+        String clazz = context;
+        int dotIndex = context.lastIndexOf('.');
+        if (dotIndex != -1) {
+            clazz = context.substring(dotIndex + 1);
+        }
+        return clazz;
+    }
+
+    private String convertToFieldName(String argName, String context) {
+        String fieldName = context + "_" + argName;
+        char[] chars = new char[fieldName.length()];
+        int index = 0;
+        for (int i = 0; i < fieldName.length(); i++) {
+            char c = fieldName.charAt(i);
+            if (Character.isLetterOrDigit(c) ||
+                    c == '_') {
+                chars[index++] = c;
+            } else if (index > 0 && chars[index - 1] != '_') {
+                chars[index++] = '_';
+            }
+        }
+        return String.valueOf(chars);
     }
 
     public void cleanup() {
