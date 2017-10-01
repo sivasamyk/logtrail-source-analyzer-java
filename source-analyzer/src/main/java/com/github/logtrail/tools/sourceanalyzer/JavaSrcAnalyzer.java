@@ -75,6 +75,11 @@ public class JavaSrcAnalyzer {
 
     public JavaSrcAnalyzer(Properties properties) {
         this.srcRoots = Arrays.asList(properties.getProperty("src.roots").split(":"));
+        for (String srcRoot : srcRoots) {
+            if (!new File(srcRoot).exists()) {
+                throw new IllegalArgumentException(srcRoot + " does not exist");
+            }
+        }
         String excludes = properties.getProperty("src.excludes");
         if (excludes != null && excludes.trim().length() > 0) {
             this.excludes = Arrays.asList(excludes.split(":"));
@@ -118,8 +123,10 @@ public class JavaSrcAnalyzer {
                     });
                     System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
                 } finally {
-                    Gson gson = new GsonBuilder().create();
-                    gson.toJson(logStatements, new FileWriter(outputFile, false));
+                    if (outputFile != null && logStatements != null) {
+                        Gson gson = new GsonBuilder().create();
+                        gson.toJson(logStatements, new FileWriter(outputFile, false));
+                    }
                 }
             } else {
                 LOGGER.error("Specify a valid src directory: {}", srcRoot);
@@ -170,6 +177,7 @@ public class JavaSrcAnalyzer {
                             LOGGER.warn("Exception while converting regex {} in file {}. Message {}", message, file, ex.getMessage());
                         }
                         logCount++;
+                        //TODO : Handle cases where logger class is from different class.
                         String clazz = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
                         if (clazz != null) {
                             if (context == LogContext.FQN && packageDec.isPresent()) {
@@ -298,9 +306,10 @@ public class JavaSrcAnalyzer {
 
     public static void main(String args[]) throws Exception {
         try {
+            String home = System.getProperty("analyzer.home");
             CommandLineParser parser = new DefaultParser();
             CommandLine commandLine = parser.parse(options(), args);
-            String configPath = "conf/config.properties";
+            String configPath = home + "/conf/config.properties";
 
             if (commandLine.hasOption("f")) {
                 configPath = commandLine.getOptionValue('f');
@@ -312,22 +321,25 @@ public class JavaSrcAnalyzer {
             srcAnalyzer.analyze();
             String elasticsearchUrl = config.getProperty("elasticsearch.url");
             if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
-                int patternCount = srcAnalyzer.logStatements.size();
-                LOGGER.info("Writing {} patterns to ES", patternCount);
-                System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
-                ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
-                elasticOutput.init();
-                elasticOutput.writeDocuments(srcAnalyzer.logStatements);
-                elasticOutput.cleanup();
+                if (srcAnalyzer.logStatements != null) {
+                    int patternCount = srcAnalyzer.logStatements.size();
+                    LOGGER.info("Writing {} patterns to ES", patternCount);
+                    System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
+                    ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
+                    elasticOutput.init();
+                    elasticOutput.writeDocuments(srcAnalyzer.logStatements);
+                    elasticOutput.cleanup();
+                }
             }
-        } catch (org.apache.commons.cli.ParseException e) {
+        } catch (Exception e) {
+            LOGGER.error("exception while analyzing ",e);
             System.err.println(e.getMessage());
         }
     }
 
     private static Options options() {
         Options options = new Options();
-        options.addRequiredOption("f", "config", true, "Path to configuration properties file");
+        options.addOption("f", "config", true, "Path to configuration properties file");
         return options;
     }
 

@@ -1,5 +1,6 @@
 package com.github.logtrail.tools;
 
+import io.searchbox.annotations.JestId;
 import io.searchbox.client.JestClient;
 import io.searchbox.client.JestClientFactory;
 import io.searchbox.client.JestResult;
@@ -23,8 +24,8 @@ import java.util.stream.Collectors;
 public class LogProcessor {
     private JestClient elasticClient;
     private Map<String, List<LogPattern>> contextToPatternsMap;
-    private final String INDEX_NAME = ".logtrail-patterns";
-    private final String TYPE_NAME = "patterns";
+    private final String INDEX_NAME = ".logtrail";
+    private final String TYPE_NAME = "pattern";
     private static final Logger LOGGER = LoggerFactory.getLogger(LogProcessor.class);
 
     public LogProcessor(String[] esHosts) {
@@ -36,23 +37,29 @@ public class LogProcessor {
     }
 
     public void init() {
-        List<LogPattern> patterns = fetchLogStatements();
-        LOGGER.info("Fetched {} patterns from elasticsearch server", patterns.size());
+        List<LogPattern> logPatterns = fetchLogPatterns();
+        LOGGER.info("Fetched {} logPatterns from elasticsearch server", logPatterns.size());
 
         //populate map
         contextToPatternsMap = new HashMap<>();
-        for (LogPattern pattern : patterns) {
-            List<LogPattern> patternsForContext = contextToPatternsMap.get(pattern.getContext());
+        for (LogPattern logPattern : logPatterns) {
+            //pre-compile pattern
+            if (logPattern.getMessageRegEx() != null) {
+                logPattern.setPattern(Pattern.compile(logPattern.getMessageRegEx()));
+            } else {
+                LOGGER.debug("Null message for pattern :" + logPattern);
+            }
+            List<LogPattern> patternsForContext = contextToPatternsMap.get(logPattern.getContext());
             if (patternsForContext == null) {
                 patternsForContext = new ArrayList<>();
-                contextToPatternsMap.put(pattern.getContext(), patternsForContext);
+                contextToPatternsMap.put(logPattern.getContext(), patternsForContext);
             }
-            patternsForContext.add(pattern);
+            patternsForContext.add(logPattern);
         }
     }
 
-    private List<LogPattern> fetchLogStatements() {
-        List<LogPattern> patterns = new ArrayList<>();
+    private List<LogPattern> fetchLogPatterns() {
+        List<LogPattern> patterns = new ArrayList<LogPattern>();
         try {
             String matchAllQuery = "{\n" +
                     "    \"query\": {\n" +
@@ -61,13 +68,16 @@ public class LogProcessor {
                     "}";
             Search search = new Search.Builder(matchAllQuery).addIndex(INDEX_NAME).addType(TYPE_NAME)
                     .setParameter(Parameters.SCROLL, "1m")
-                    .setParameter(Parameters.SIZE, 1000)
+                    .setParameter(Parameters.SIZE, 500)
                     .build();
             SearchResult searchResult = elasticClient.execute(search);
-            String scrollId = searchResult.getJsonObject().get("_scroll_id").getAsString();
+            String scrollId = null;
             if (searchResult.isSucceeded()) {
                 List<SearchResult.Hit<LogPattern, Void>> hits = searchResult.getHits(LogPattern.class);
                 patterns.addAll(hits.stream().map(hit -> hit.source).collect(Collectors.toList()));
+                if (searchResult.getJsonObject().has("_scroll_id")) {
+                    scrollId = searchResult.getJsonObject().get("_scroll_id").getAsString();
+                }
             }
 
             while (scrollId != null) {
@@ -96,20 +106,34 @@ public class LogProcessor {
             patternsForContext = contextToPatternsMap.get("default-context");
         }
         if (patternsForContext != null) {
-            for (LogPattern pattern : patternsForContext) {
-                Matcher matcher = pattern.getPattern().matcher(message);
-                if (matcher.matches()) {
-                    parsedInfo = new LinkedHashMap<>();
-                    parsedInfo.put("patternId", pattern.getId());
-                    List<Integer> matchIndices = new ArrayList<>();
-                    for (int i = 1; i <= matcher.groupCount(); i++) {
-                        parsedInfo.put("a" + i, matcher.group(i));
-                        matchIndices.add(matcher.start(i));
-                        matchIndices.add(matcher.end(i));
-                    }
-                    if (matcher.groupCount() > 0) {
-                        parsedInfo.put("matchIndices", matchIndices);
-                    }
+            parsedInfo = match(message, patternsForContext);
+            if (parsedInfo == null) {
+                //check in default context
+//                patternsForContext = contextToPatternsMap.get("default-context");
+//                if (patternsForContext != null) {
+//                    match(message, patternsForContext);
+//                }
+                LOGGER.debug("Cannot find match for {} in context {}", message, context);
+            }
+        }
+        return parsedInfo;
+    }
+
+    private Map<String, Object> match(String message, List<LogPattern> patternsForContext) {
+        Map<String, Object> parsedInfo = null;
+        for (LogPattern pattern : patternsForContext) {
+            Matcher matcher = pattern.getPattern().matcher(message);
+            if (matcher.matches()) {
+                parsedInfo = new LinkedHashMap<>();
+                parsedInfo.put("patternId", pattern.getId());
+                List<Integer> matchIndices = new ArrayList<>();
+                for (int i = 1; i <= matcher.groupCount(); i++) {
+                    parsedInfo.put("a" + i, matcher.group(i));
+                    matchIndices.add(matcher.start(i));
+                    matchIndices.add(matcher.end(i));
+                }
+                if (matcher.groupCount() > 0) {
+                    parsedInfo.put("matchIndices", matchIndices);
                 }
             }
         }
@@ -124,8 +148,13 @@ public class LogProcessor {
         private String messageRegEx;
         private List<String> args;
         private String context;
+        @JestId
         private String id;
         private Pattern pattern;
+
+        public void setPattern(Pattern pattern) {
+            this.pattern = pattern;
+        }
 
         public String getMessageRegEx() {
             return messageRegEx;
@@ -163,13 +192,23 @@ public class LogProcessor {
         public Pattern getPattern() {
             return pattern;
         }
+
+        @Override
+        public String toString() {
+            return "LogPattern{" +
+                    "messageRegEx='" + messageRegEx + '\'' +
+                    ", args=" + args +
+                    ", context='" + context + '\'' +
+                    ", id='" + id + '\'' +
+                    '}';
+        }
     }
 
     public static void main(String args[]) {
         LogProcessor logProcessor = new LogProcessor(new String[]{"http://localhost:9200"});
         logProcessor.init();
-        System.out.println(logProcessor.process("Failed while trying to create a new session", "org.apache.zookeeper.server.jersey.resources.SessionsResource"));
-        System.out.println(logProcessor.process("Closed socket connection for client /10.196.68.149:35705 which had sessionid 0x2384135ffe302b5", "org.apache.zookeeper.server.NIOServerCnxn"));
+        System.out.println(logProcessor.process("Going to retain 2 images with txid >= 37567055", "org.apache.hadoop.hdfs.server.namenode.NNStorageRetentionManager"));
+        System.out.println(logProcessor.process("Web server init done", "org.apache.hadoop.hdfs.server.namenode.SecondaryNameNode"));
         logProcessor.cleanup();
     }
 }

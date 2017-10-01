@@ -26,4 +26,4 @@ HOME=`dirname "$SCRIPT"`/..
 
 HOME=`cd "$HOME"; pwd`
 
-${JAVA} ${JAVA_OPTS} -jar $HOME/lib/source-analyzer-1.0-SNAPSHOT-shaded.jar $*
+${JAVA} ${JAVA_OPTS} -jar -Danalyzer.home=$HOME $HOME/lib/source-analyzer-1.0-SNAPSHOT-shaded.jar $*
