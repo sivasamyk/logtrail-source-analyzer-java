@@ -129,8 +129,7 @@ public class LogProcessor {
                 parsedInfo.put("patternId", pattern.getId());
                 List<Integer> matchIndices = new ArrayList<>();
                 for (int i = 1; i <= matcher.groupCount(); i++) {
-                    String argName = convertToFieldName(pattern.args.get(i - 1),
-                            extractClassName(pattern.getContext()));
+                    String argName = pattern.getFields().get(i-1);
                     String value = matcher.group(i);
                     if (NumberUtils.isNumber(value)) {
                         Number number = NumberUtils.createNumber(value);
@@ -150,31 +149,6 @@ public class LogProcessor {
         return parsedInfo;
     }
 
-    private String extractClassName(String context) {
-        String clazz = context;
-        int dotIndex = context.lastIndexOf('.');
-        if (dotIndex != -1) {
-            clazz = context.substring(dotIndex + 1);
-        }
-        return clazz;
-    }
-
-    private String convertToFieldName(String argName, String context) {
-        String fieldName = context + "_" + argName;
-        char[] chars = new char[fieldName.length()];
-        int index = 0;
-        for (int i = 0; i < fieldName.length(); i++) {
-            char c = fieldName.charAt(i);
-            if (Character.isLetterOrDigit(c) ||
-                    c == '_') {
-                chars[index++] = c;
-            } else if (index > 0 && chars[index - 1] != '_') {
-                chars[index++] = '_';
-            }
-        }
-        return String.valueOf(chars);
-    }
-
     public void cleanup() {
         elasticClient.shutdownClient();
     }
@@ -182,6 +156,7 @@ public class LogProcessor {
     private static class LogPattern {
         private String messageRegEx;
         private List<String> args;
+        private List<String> fields;
         private String context;
         @JestId
         private String id;
@@ -236,6 +211,14 @@ public class LogProcessor {
                     ", context='" + context + '\'' +
                     ", id='" + id + '\'' +
                     '}';
+        }
+
+        public List<String> getFields() {
+            return fields;
+        }
+
+        public void setFields(List<String> fields) {
+            this.fields = fields;
         }
     }
 

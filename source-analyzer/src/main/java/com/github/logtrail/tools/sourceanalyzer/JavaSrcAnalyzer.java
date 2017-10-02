@@ -124,7 +124,7 @@ public class JavaSrcAnalyzer {
                     System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
                 } finally {
                     if (outputFile != null && logStatements != null) {
-                        Gson gson = new GsonBuilder().create();
+                        Gson gson = new GsonBuilder().setPrettyPrinting().create();
                         gson.toJson(logStatements, new FileWriter(outputFile, false));
                     }
                 }
@@ -166,17 +166,8 @@ public class JavaSrcAnalyzer {
                     }
 
                     if (message != null) {
-                        LogStatement logStatement = new LogStatement();
-                        try {
-                            logStatement.setMessageRegEx(convertToRegEx(message));
-                            if (args != null) {
-                                logStatement.setArgs(args);
-                            }
 
-                        } catch (PatternSyntaxException ex) {
-                            LOGGER.warn("Exception while converting regex {} in file {}. Message {}", message, file, ex.getMessage());
-                        }
-                        logCount++;
+                        LogStatement logStatement = new LogStatement();
                         //TODO : Handle cases where logger class is from different class.
                         String clazz = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
                         if (clazz != null) {
@@ -187,6 +178,22 @@ public class JavaSrcAnalyzer {
 
                         logStatement.setContext(clazz != null ? clazz : DEFAULT_CONTEXT_NAME);
                         logStatement.setLevel(methodName);
+                        try {
+                            logStatement.setMessageRegEx(convertToRegEx(message));
+                            if (args != null) {
+                                logStatement.setArgs(args);
+                                List<String> fields = new ArrayList<>();
+                                for (String arg : args) {
+                                    fields.add(getFieldName(arg,extractClassName(logStatement.getContext())));
+                                }
+                                logStatement.setFields(fields);
+                            }
+
+                        } catch (PatternSyntaxException ex) {
+                            LOGGER.warn("Exception while converting regex {} in file {}. Message {}", message, file, ex.getMessage());
+                        }
+                        logCount++;
+
                         String messageId = String.valueOf((logStatement.getContext() + "-" + logStatement.getMessageRegEx()).hashCode());
                         logStatement.setMessageId(messageId);
                         Optional<MethodDeclaration> method = methodCallExpr.getAncestorOfType(MethodDeclaration.class);
@@ -199,6 +206,30 @@ public class JavaSrcAnalyzer {
                 }
             }
         }
+    }
+
+    private String extractClassName(String context) {
+        String clazz = context;
+        int dotIndex = context.lastIndexOf('.');
+        if (dotIndex != -1) {
+            clazz = context.substring(dotIndex + 1);
+        }
+        return clazz;
+    }
+
+    private String getFieldName(String argName, String context) {
+        String fieldName = context + "_" + argName;
+        StringBuilder bldr = new StringBuilder();
+        for (int i = 0; i < fieldName.length(); i++) {
+            char c = fieldName.charAt(i);
+            if (Character.isLetterOrDigit(c) ||
+                    c == '_') {
+                bldr.append(c);
+            } else if (bldr.charAt(bldr.length() - 1) != '_') {
+                bldr.append('_');
+            }
+        }
+        return bldr.toString();
     }
 
     private void processBinaryArgs(BinaryExpr expr, StringBuilder message, List<String> args) {
@@ -332,7 +363,7 @@ public class JavaSrcAnalyzer {
                 }
             }
         } catch (Exception e) {
-            LOGGER.error("exception while analyzing ",e);
+            LOGGER.error("exception while analyzing ", e);
             System.err.println(e.getMessage());
         }
     }

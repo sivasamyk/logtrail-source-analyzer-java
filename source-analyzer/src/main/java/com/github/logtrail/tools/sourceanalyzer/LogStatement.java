@@ -14,6 +14,7 @@ public class LogStatement {
     private String method;
     private String messageId; // To be removed
     private List<String> args;
+    private List<String> fields;
 
     public String getMessageRegEx() {
         return messageRegEx;
@@ -65,5 +66,13 @@ public class LogStatement {
 
     public void setMessageId(String messageId) {
         this.messageId = messageId;
+    }
+
+    public List<String> getFields() {
+        return fields;
+    }
+
+    public void setFields(List<String> fields) {
+        this.fields = fields;
     }
 }
