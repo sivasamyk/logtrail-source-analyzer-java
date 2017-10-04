@@ -218,7 +218,7 @@ public class JavaSrcAnalyzer {
     }
 
     private String getFieldName(String argName, String context) {
-        String fieldName = context + "_" + argName;
+        String fieldName = context + "_" + argName.replaceAll("\\(\\)","");
         StringBuilder bldr = new StringBuilder();
         for (int i = 0; i < fieldName.length(); i++) {
             char c = fieldName.charAt(i);

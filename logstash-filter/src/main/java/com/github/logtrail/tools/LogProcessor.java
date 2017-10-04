@@ -110,10 +110,10 @@ public class LogProcessor {
             parsedInfo = match(message, patternsForContext);
             if (parsedInfo == null) {
                 //check in default context
-//                patternsForContext = contextToPatternsMap.get("default-context");
-//                if (patternsForContext != null) {
-//                    match(message, patternsForContext);
-//                }
+                patternsForContext = contextToPatternsMap.get("default-context");
+                if (patternsForContext != null) {
+                    match(message, patternsForContext);
+                }
                 LOGGER.debug("Cannot find match for {} in context {}", message, context);
             }
         }
