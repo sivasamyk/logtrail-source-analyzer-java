@@ -16,11 +16,25 @@ public class SampleLogger {
 
         LOGGER.info("What is god? : " + n);
 
+        LogHolder.LOGGER.info("From a different logger ..");
+
         LOGGER.info("This is an example for " + "append log " + getStr() + getMoreStr() + " and this should work!");
         try {
 
         } catch (Exception e) {
             LOGGER.error("This is logger with exception ",e);
+        }
+    }
+
+    class Inner {
+        private void log() {
+            LOGGER.info("From Inner Class");
+        }
+    }
+
+    static class StaticInner {
+        private void log() {
+            LOGGER.info("From Static Inner Class");
         }
     }
 

@@ -43,11 +43,12 @@ import java.util.regex.PatternSyntaxException;
  */
 public class JavaSrcAnalyzer {
 
-    private List<String> srcRoots, excludes;
+    private String srcRoot;
+    private List<String> excludes;
     private String outputFile;
     private static final Set<String> LOG_METHODS = new HashSet<String>();
-    private int fileCount = 0, logCount = 0;
-    private List<LogStatement> logStatements;
+    private int fileCount = 0, logCount = 0, defaultContextCount = 0;
+    private List<LogStatement> logStatements = new ArrayList<>();
     private static final String REGEX_SPECIAL_CHARS = "[\\<\\(\\[\\\\\\^\\-\\=\\$\\!\\|\\]\\)‌​\\?\\*\\+\\.\\>]";
     private static Logger LOGGER = LoggerFactory.getLogger(JavaSrcAnalyzer.class);
     private static final String FORMAT_ANCHOR = "{}";
@@ -55,6 +56,7 @@ public class JavaSrcAnalyzer {
     private static final Pattern REGEX_SPECIAL_CHARS_PATTERN = Pattern.compile(REGEX_SPECIAL_CHARS);
     private static final String DEFAULT_CONTEXT_NAME = "default-context";
     private LogContext context;
+    private String elasticsearchUrl;
 
     static {
         LOG_METHODS.add("debug");
@@ -64,21 +66,19 @@ public class JavaSrcAnalyzer {
         LOG_METHODS.add("error");
     }
 
-    public JavaSrcAnalyzer(List<String> srcRoots, List<String> excludes,
+    public JavaSrcAnalyzer(String srcRoot, List<String> excludes,
                            String outputFile, String context)
             throws IOException, ParseException {
-        this.srcRoots = srcRoots;
+        this.srcRoot = srcRoot;
         this.excludes = excludes;
         this.outputFile = outputFile;
         this.context = LogContext.valueOf(context);
     }
 
     public JavaSrcAnalyzer(Properties properties) {
-        this.srcRoots = Arrays.asList(properties.getProperty("src.roots").split(":"));
-        for (String srcRoot : srcRoots) {
-            if (!new File(srcRoot).exists()) {
-                throw new IllegalArgumentException(srcRoot + " does not exist");
-            }
+        this.srcRoot = properties.getProperty("src.root");
+        if (!new File(srcRoot).exists()) {
+            throw new IllegalArgumentException("Cannot find src dir :" + srcRoot);
         }
         String excludes = properties.getProperty("src.excludes");
         if (excludes != null && excludes.trim().length() > 0) {
@@ -86,51 +86,49 @@ public class JavaSrcAnalyzer {
         }
         this.outputFile = properties.getProperty("patterns.out.file");
         this.context = LogContext.valueOf(properties.getProperty("context"));
+        this.elasticsearchUrl = properties.getProperty("elasticsearch.url");
     }
 
     public void analyze() throws IOException {
 
-        for (String srcRoot : srcRoots) {
-            Path path = Paths.get(srcRoot);
-            if (Files.isDirectory(path)) {
-                try {
-                    logStatements = new ArrayList<>();
-                    System.out.println("Walking src : " + srcRoot);
-                    Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
-                        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                            if (file.toString().endsWith(".java")) {
-                                try {
-                                    analyzeFile(file.toFile());
-                                    fileCount++;
-                                } catch (ParseProblemException e) {
-                                    LOGGER.warn("Exception while analyzing file {}", file, e);
-                                }
+        Path path = Paths.get(srcRoot);
+        if (Files.isDirectory(path)) {
+            try {
+                System.out.println("Walking src : " + srcRoot);
+                Files.walkFileTree(path, new SimpleFileVisitor<Path>() {
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        if (file.toString().endsWith(".java")) {
+                            try {
+                                analyzeFile(file.toFile());
+                                fileCount++;
+                            } catch (ParseProblemException e) {
+                                LOGGER.warn("Exception while analyzing file {}", file, e);
                             }
-                            return FileVisitResult.CONTINUE;
                         }
-
-                        @Override
-                        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-                            if (excludes != null) {
-                                for (String exclude : excludes) {
-                                    if (dir.toString().contains(exclude)) {
-                                        return FileVisitResult.SKIP_SUBTREE;
-                                    }
-                                }
-                            }
-                            return FileVisitResult.CONTINUE;
-                        }
-                    });
-                    System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files", logCount, fileCount));
-                } finally {
-                    if (outputFile != null && logStatements != null) {
-                        Gson gson = new GsonBuilder().setPrettyPrinting().create();
-                        gson.toJson(logStatements, new FileWriter(outputFile, false));
+                        return FileVisitResult.CONTINUE;
                     }
+
+                    @Override
+                    public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+                        if (excludes != null) {
+                            for (String exclude : excludes) {
+                                if (dir.toString().contains(exclude)) {
+                                    return FileVisitResult.SKIP_SUBTREE;
+                                }
+                            }
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+                System.out.println(MessageFormat.format("Analyzed {0} logs in {1} files and {2} mapped to default-context", logCount, fileCount, defaultContextCount));
+            } finally {
+                if (outputFile != null && logStatements != null) {
+                    Gson gson = new GsonBuilder().setPrettyPrinting().create();
+                    gson.toJson(logStatements, new FileWriter(outputFile, false));
                 }
-            } else {
-                LOGGER.error("Specify a valid src directory: {}", srcRoot);
             }
+        } else {
+            LOGGER.error("Specify a valid src directory: {}", srcRoot);
         }
     }
 
@@ -168,9 +166,8 @@ public class JavaSrcAnalyzer {
                     if (message != null) {
 
                         LogStatement logStatement = new LogStatement();
-                        //TODO : Handle cases where logger class is from different class.
                         String clazz = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
-                        if (clazz != null) {
+                        if (clazz != null && !DEFAULT_CONTEXT_NAME.equals(clazz)) {
                             if (context == LogContext.FQN && packageDec.isPresent()) {
                                 clazz = packageDec.get().getNameAsString() + "." + clazz;
                             }
@@ -184,7 +181,7 @@ public class JavaSrcAnalyzer {
                                 logStatement.setArgs(args);
                                 List<String> fields = new ArrayList<>();
                                 for (String arg : args) {
-                                    fields.add(getFieldName(arg,extractClassName(logStatement.getContext())));
+                                    fields.add(getFieldName(arg, extractClassName(logStatement.getContext())));
                                 }
                                 logStatement.setFields(fields);
                             }
@@ -193,6 +190,9 @@ public class JavaSrcAnalyzer {
                             LOGGER.warn("Exception while converting regex {} in file {}. Message {}", message, file, ex.getMessage());
                         }
                         logCount++;
+                        if (DEFAULT_CONTEXT_NAME.equals(logStatement.getContext())) {
+                            defaultContextCount++;
+                        }
 
                         String messageId = String.valueOf((logStatement.getContext() + "-" + logStatement.getMessageRegEx()).hashCode());
                         logStatement.setMessageId(messageId);
@@ -218,7 +218,7 @@ public class JavaSrcAnalyzer {
     }
 
     private String getFieldName(String argName, String context) {
-        String fieldName = context + "_" + argName.replaceAll("\\(\\)","");
+        String fieldName = context + "_" + argName.replaceAll("\\(\\)", "");
         StringBuilder bldr = new StringBuilder();
         for (int i = 0; i < fieldName.length(); i++) {
             char c = fieldName.charAt(i);
@@ -281,15 +281,6 @@ public class JavaSrcAnalyzer {
         return args;
     }
 
-//    private Map<String, String> convertArgsToMap(List<String> args) {
-//        Map<String, String> argsMap = new LinkedHashMap<>();
-//        int i = 1;
-//        for (String arg : args) {
-//            argsMap.put("arg" + i++, arg);
-//        }
-//        return argsMap;
-//    }
-
     //Creates regEx pattern from message with named groups
     private String convertToRegEx(String message) {
         String cleanedUpMessage = REGEX_SPECIAL_CHARS_PATTERN.matcher(message).replaceAll("\\\\$0");
@@ -307,10 +298,10 @@ public class JavaSrcAnalyzer {
     private String getLogDeclarationClass(MethodCallExpr methodCallExpr, SetMultimap<String, String> classToFieldsMap, File file) {
         Optional<Expression> scope = methodCallExpr.getScope();
         String logClass = DEFAULT_CONTEXT_NAME;
-        NameExpr nameExpr = null;
+        NameExpr nameExpr;
         if (scope.isPresent() && scope.get() instanceof NameExpr) {
             nameExpr = (NameExpr) scope.get();
-        } else {
+        } else { // for other cases like AnotherClass.LOGGER.sever() - maps to default-context
             LOGGER.warn("Cannot resolve parent class for {} in file {}", methodCallExpr, file);
             return logClass;
         }
@@ -350,21 +341,25 @@ public class JavaSrcAnalyzer {
             config.load(new FileInputStream(configPath));
             JavaSrcAnalyzer srcAnalyzer = new JavaSrcAnalyzer(config);
             srcAnalyzer.analyze();
-            String elasticsearchUrl = config.getProperty("elasticsearch.url");
-            if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
-                if (srcAnalyzer.logStatements != null) {
-                    int patternCount = srcAnalyzer.logStatements.size();
-                    LOGGER.info("Writing {} patterns to ES", patternCount);
-                    System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
-                    ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
-                    elasticOutput.init();
-                    elasticOutput.writeDocuments(srcAnalyzer.logStatements);
-                    elasticOutput.cleanup();
-                }
-            }
+            srcAnalyzer.writeToElasticsearch();
+
         } catch (Exception e) {
             LOGGER.error("exception while analyzing ", e);
             System.err.println(e.getMessage());
+        }
+    }
+
+    private void writeToElasticsearch() throws Exception {
+        if (elasticsearchUrl != null && !elasticsearchUrl.isEmpty()) {
+            if (this.logStatements != null) {
+                int patternCount = this.logStatements.size();
+                LOGGER.info("Writing {} patterns to ES", patternCount);
+                System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
+                ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
+                elasticOutput.init();
+                elasticOutput.writeDocuments(this.logStatements);
+                elasticOutput.cleanup();
+            }
         }
     }
 
