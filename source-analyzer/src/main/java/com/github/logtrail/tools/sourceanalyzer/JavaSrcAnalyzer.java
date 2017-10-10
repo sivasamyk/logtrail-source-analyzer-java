@@ -139,7 +139,10 @@ public class JavaSrcAnalyzer {
         Optional<PackageDeclaration> packageDec = cu.getPackageDeclaration();
 
         //Get all field declarations in this file
-        HashMultimap<String, String> classToFieldsMap = getFieldsInClass(cu);
+        HashMultimap<String, String> classToFieldsMap = null;
+        if (context != LogContext.FILE) {
+            classToFieldsMap = getFieldsInClass(cu);
+        }
 
         //loop through all method calls in this file
         for (MethodCallExpr methodCallExpr : methodCallExprList) {
@@ -166,14 +169,19 @@ public class JavaSrcAnalyzer {
                     if (message != null) {
 
                         LogStatement logStatement = new LogStatement();
-                        String clazz = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
-                        if (clazz != null && !DEFAULT_CONTEXT_NAME.equals(clazz)) {
-                            if (context == LogContext.FQN && packageDec.isPresent()) {
-                                clazz = packageDec.get().getNameAsString() + "." + clazz;
+                        String logContext;
+                        if (context != LogContext.FILE) {
+                            logContext = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
+                            if (logContext != null && !DEFAULT_CONTEXT_NAME.equals(logContext)) {
+                                if (context == LogContext.FQN && packageDec.isPresent()) {
+                                    logContext = packageDec.get().getNameAsString() + "." + logContext;
+                                }
                             }
+                        } else {
+                            logContext = file.getName();
                         }
 
-                        logStatement.setContext(clazz != null ? clazz : DEFAULT_CONTEXT_NAME);
+                        logStatement.setContext(logContext != null ? logContext : DEFAULT_CONTEXT_NAME);
                         logStatement.setLevel(methodName);
                         try {
                             logStatement.setMessageRegEx(convertToRegEx(message));
@@ -208,11 +216,16 @@ public class JavaSrcAnalyzer {
         }
     }
 
-    private String extractClassName(String context) {
-        String clazz = context;
-        int dotIndex = context.lastIndexOf('.');
-        if (dotIndex != -1) {
-            clazz = context.substring(dotIndex + 1);
+    private String extractClassName(String logContext) {
+
+        String clazz = logContext;
+        if (context == LogContext.FQN) {
+            int dotIndex = logContext.lastIndexOf('.');
+            if (dotIndex != -1) {
+                clazz = logContext.substring(dotIndex + 1);
+            }
+        } else if (context == LogContext.FILE) {
+            clazz = logContext.substring(0,logContext.lastIndexOf("."));
         }
         return clazz;
     }
@@ -370,6 +383,6 @@ public class JavaSrcAnalyzer {
     }
 
     enum LogContext {
-        SIMPLE_NAME, FQN
+        SIMPLE_NAME, FQN, FILE
     }
 }
