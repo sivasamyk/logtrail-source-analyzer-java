@@ -25,17 +25,19 @@ import java.util.stream.Collectors;
  */
 public class LogProcessor {
     private JestClient elasticClient;
+    private String indexPattern;
     private Map<String, List<LogPattern>> contextToPatternsMap;
     private final String INDEX_NAME = ".logtrail";
     private final String TYPE_NAME = "pattern";
     private static final Logger LOGGER = LoggerFactory.getLogger(LogProcessor.class);
 
-    public LogProcessor(String[] esHosts) {
+    public LogProcessor(String[] esHosts, String indexPattern) {
         JestClientFactory factory = new JestClientFactory();
         factory.setHttpClientConfig(new HttpClientConfig
                 .Builder(esHosts[0])
                 .multiThreaded(true).build());
-        elasticClient = factory.getObject();
+        this.elasticClient = factory.getObject();
+        this.indexPattern = indexPattern;
     }
 
     public void init() {
@@ -62,13 +64,23 @@ public class LogProcessor {
 
     private List<LogPattern> fetchLogPatterns() {
         List<LogPattern> patterns = new ArrayList<LogPattern>();
+
         try {
-            String matchAllQuery = "{\n" +
+            String matchQuery = "{\n" +
                     "    \"query\": {\n" +
                     "        \"match_all\": {}\n" +
                     "    }\n" +
                     "}";
-            Search search = new Search.Builder(matchAllQuery).addIndex(INDEX_NAME).addType(TYPE_NAME)
+            if (indexPattern != null) {
+                matchQuery = "{\n" +
+                        "    \"query\": {\n" +
+                                        "\"term\" : {\n" +
+                                        "\"indexPattern\" :\"" + indexPattern + "\"" +
+                                        "}\n" +
+                        "    }\n" +
+                        "}";
+            }
+            Search search = new Search.Builder(matchQuery).addIndex(INDEX_NAME).addType(TYPE_NAME)
                     .setParameter(Parameters.SCROLL, "1m")
                     .setParameter(Parameters.SIZE, 500)
                     .build();
@@ -80,6 +92,8 @@ public class LogProcessor {
                 if (searchResult.getJsonObject().has("_scroll_id")) {
                     scrollId = searchResult.getJsonObject().get("_scroll_id").getAsString();
                 }
+            } else {
+                LOGGER.error("Error while fetching patterns : {}" , searchResult.getErrorMessage());
             }
 
             while (scrollId != null) {
@@ -121,7 +135,7 @@ public class LogProcessor {
             }
         } catch (Throwable e) {
             //log any error during processing and return empty parsedInfo
-            LOGGER.error(MessageFormat.format("Exception while processing message {0} in context {1} ", message, context),  e);
+            LOGGER.error(MessageFormat.format("Exception while processing message {0} in context {1} ", message, context), e);
         }
         return parsedInfo;
     }
@@ -135,7 +149,7 @@ public class LogProcessor {
                 parsedInfo.put("patternId", pattern.getId());
                 List<Integer> matchIndices = new ArrayList<>();
                 for (int i = 1; i <= matcher.groupCount(); i++) {
-                    String argName = pattern.getFields().get(i-1);
+                    String argName = pattern.getFields().get(i - 1);
                     String value = matcher.group(i);
                     if (NumberUtils.isNumber(value)) {
                         Number number = NumberUtils.createNumber(value);
@@ -229,7 +243,7 @@ public class LogProcessor {
     }
 
     public static void main(String args[]) {
-        LogProcessor logProcessor = new LogProcessor(new String[]{"http://localhost:9200"});
+        LogProcessor logProcessor = new LogProcessor(new String[]{"http://localhost:9200"},"logstash-*");
         logProcessor.init();
         System.out.println(logProcessor.process("Going to retain 2 images with txid >= 37567055", "org.apache.hadoop.hdfs.server.namenode.NNStorageRetentionManager"));
         System.out.println(logProcessor.process("Web server init done", "org.apache.hadoop.hdfs.server.namenode.SecondaryNameNode"));

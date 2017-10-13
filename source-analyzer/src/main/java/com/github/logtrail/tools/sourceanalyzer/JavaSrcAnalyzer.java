@@ -56,7 +56,8 @@ public class JavaSrcAnalyzer {
     private static final Pattern REGEX_SPECIAL_CHARS_PATTERN = Pattern.compile(REGEX_SPECIAL_CHARS);
     private static final String DEFAULT_CONTEXT_NAME = "default-context";
     private LogContext context;
-    private String elasticsearchUrl;
+    private String elasticsearchUrl, indexPattern;
+    private boolean appendRegExBoundaries, coldWrite;
 
     static {
         LOG_METHODS.add("debug");
@@ -87,6 +88,9 @@ public class JavaSrcAnalyzer {
         this.outputFile = properties.getProperty("patterns.out.file");
         this.context = LogContext.valueOf(properties.getProperty("context"));
         this.elasticsearchUrl = properties.getProperty("elasticsearch.url");
+        this.appendRegExBoundaries = Boolean.parseBoolean(properties.getProperty("append.regex.boundaries","true"));
+        this.indexPattern = properties.getProperty("logtrail.index.pattern","logstash-*");
+        this.coldWrite = Boolean.parseBoolean(properties.getProperty("cold.write","false"));
     }
 
     public void analyze() throws IOException {
@@ -169,6 +173,7 @@ public class JavaSrcAnalyzer {
                     if (message != null) {
 
                         LogStatement logStatement = new LogStatement();
+                        logStatement.setIndexPattern(indexPattern);
                         String logContext;
                         if (context != LogContext.FILE) {
                             logContext = getLogDeclarationClass(methodCallExpr, classToFieldsMap, file);
@@ -296,12 +301,16 @@ public class JavaSrcAnalyzer {
 
     //Creates regEx pattern from message with named groups
     private String convertToRegEx(String message) {
+        //Escape any regex special characters in the log message
         String cleanedUpMessage = REGEX_SPECIAL_CHARS_PATTERN.matcher(message).replaceAll("\\\\$0");
         int argCount = 1;
         while (cleanedUpMessage.contains(FORMAT_ANCHOR)) {
             Matcher matcher = LOG_FORMAT_ANCHOR_PATTERN.matcher(cleanedUpMessage);
             cleanedUpMessage = matcher.replaceFirst("(?<arg" + argCount + ">[\\\\S]+)");
             argCount++;
+        }
+        if (appendRegExBoundaries) {
+            cleanedUpMessage = "^" + cleanedUpMessage + "$";
         }
         //Compile to make sure we have a valid pattern.
         return Pattern.compile(cleanedUpMessage).pattern();
@@ -369,9 +378,13 @@ public class JavaSrcAnalyzer {
                 LOGGER.info("Writing {} patterns to ES", patternCount);
                 System.out.println("Writing " + patternCount + " patterns to elasticsearch @" + elasticsearchUrl);
                 ElasticOutput elasticOutput = new ElasticOutput(elasticsearchUrl);
+                if (coldWrite) {
+                    elasticOutput.deletePatternsIndex();
+                }
                 elasticOutput.init();
                 elasticOutput.writeDocuments(this.logStatements);
                 elasticOutput.cleanup();
+                System.out.println("Done...");
             }
         }
     }

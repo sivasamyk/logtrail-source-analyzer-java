@@ -4,13 +4,11 @@ import io.searchbox.client.JestClient;
 import io.searchbox.client.JestClientFactory;
 import io.searchbox.client.JestResult;
 import io.searchbox.client.config.HttpClientConfig;
-import io.searchbox.core.Index;
-import io.searchbox.core.Search;
-import io.searchbox.core.SearchResult;
-import io.searchbox.core.SearchScroll;
+import io.searchbox.core.*;
 import io.searchbox.indices.CreateIndex;
 import io.searchbox.indices.DeleteIndex;
 import io.searchbox.indices.IndicesExists;
+import io.searchbox.indices.mapping.PutMapping;
 import io.searchbox.params.Parameters;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Created by skaliappan on 9/14/17.
@@ -29,7 +28,7 @@ public class ElasticOutput {
     private final String TYPE_NAME = "pattern";
     private JestClient elasticClient;
     private static final Logger LOGGER = LoggerFactory.getLogger(ElasticOutput.class);
-    private Map<String,LogStatement> logStatementsMap;
+    private Map<String, LogStatement> logStatementsMap;
 
     public ElasticOutput(String url) {
         JestClientFactory factory = new JestClientFactory();
@@ -50,18 +49,37 @@ public class ElasticOutput {
             List<LogStatement> statementList = fetchLogStatements();
             LOGGER.info("Fetched {} patterns from ES", statementList.size());
             logStatementsMap = new HashMap<>();
-            for(LogStatement logStatement : statementList) {
+            for (LogStatement logStatement : statementList) {
                 logStatementsMap.put(logStatement.getMessageId(), logStatement);
             }
         }
     }
 
+    private void updateMapping() throws IOException {
+        PutMapping putMapping = new PutMapping.Builder(
+                INDEX_NAME,
+                TYPE_NAME,
+                "{ \"pattern\" : { \"properties\" : { \"indexPattern\" : {\"type\" : \"keyword\"} } } }"
+        ).build();
+        JestResult result = elasticClient.execute(putMapping);
+        if (result.isSucceeded()) {
+            LOGGER.info("Updated mapping");
+        } else {
+            LOGGER.info("Error while updating mapping {}",result.getErrorMessage());
+        }
+    }
+
     public void writeDocuments(List<LogStatement> logStatements) throws IOException {
+        Bulk.Builder bulkRequest = new Bulk.Builder();
         for (LogStatement logStatement : logStatements) {
             if (logStatementsMap == null || !logStatementsMap.containsKey(logStatement.getMessageId())) {
                 Index index = new Index.Builder(logStatement).index(INDEX_NAME).type(TYPE_NAME).build();
-                elasticClient.execute(index);
+                bulkRequest.addAction(index);
             }
+        }
+        JestResult result = elasticClient.execute(bulkRequest.build());
+        if (!result.isSucceeded()) {
+            throw new IOException("Exception while writing patterns " + result.getErrorMessage());
         }
     }
 
@@ -75,15 +93,13 @@ public class ElasticOutput {
                     "}";
             Search search = new Search.Builder(matchAllQuery).addIndex(INDEX_NAME).addType(TYPE_NAME)
                     .setParameter(Parameters.SCROLL, "1m")
-                    .setParameter(Parameters.SIZE,1000)
+                    .setParameter(Parameters.SIZE, 1000)
                     .build();
             SearchResult searchResult = elasticClient.execute(search);
             String scrollId = searchResult.getJsonObject().get("_scroll_id").getAsString();
             if (searchResult.isSucceeded()) {
                 List<SearchResult.Hit<LogStatement, Void>> hits = searchResult.getHits(LogStatement.class);
-                for (SearchResult.Hit<LogStatement,Void> hit : hits) {
-                    patterns.add(hit.source);
-                }
+                patterns.addAll(hits.stream().map(hit -> hit.source).collect(Collectors.toList()));
             }
 
             while (scrollId != null) {
@@ -106,6 +122,9 @@ public class ElasticOutput {
 
     private boolean createIndex() throws IOException {
         JestResult jestResult = elasticClient.execute(new CreateIndex.Builder(INDEX_NAME).build());
+        if (jestResult.isSucceeded()) {
+            updateMapping();
+        }
         return jestResult.isSucceeded();
     }
 

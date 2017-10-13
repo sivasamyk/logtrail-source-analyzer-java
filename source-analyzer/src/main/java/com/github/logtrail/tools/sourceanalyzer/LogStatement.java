@@ -15,6 +15,10 @@ public class LogStatement {
     private String messageId; // To be removed
     private List<String> args;
     private List<String> fields;
+    private String indexPattern;
+
+    public LogStatement() {
+    }
 
     public String getMessageRegEx() {
         return messageRegEx;
@@ -74,5 +78,13 @@ public class LogStatement {
 
     public void setFields(List<String> fields) {
         this.fields = fields;
+    }
+
+    public String getIndexPattern() {
+        return indexPattern;
+    }
+
+    public void setIndexPattern(String indexPattern) {
+        this.indexPattern = indexPattern;
     }
 }
