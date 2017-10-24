@@ -149,16 +149,20 @@ public class LogProcessor {
                 parsedInfo.put("patternId", pattern.getId());
                 List<Integer> matchIndices = new ArrayList<>();
                 for (int i = 1; i <= matcher.groupCount(); i++) {
-                    String argName = pattern.getFields().get(i - 1);
-                    String value = matcher.group(i);
-                    if (NumberUtils.isNumber(value)) {
-                        Number number = NumberUtils.createNumber(value);
-                        parsedInfo.put(argName, number);
+                    if (pattern.getFields().size() > (i-1)) {
+                        String argName = pattern.getFields().get(i - 1);
+                        String value = matcher.group(i);
+                        if (NumberUtils.isNumber(value)) {
+                            Number number = NumberUtils.createNumber(value);
+                            parsedInfo.put(argName, number);
+                        } else {
+                            parsedInfo.put(argName, value);
+                        }
+                        matchIndices.add(matcher.start(i));
+                        matchIndices.add(matcher.end(i));
                     } else {
-                        parsedInfo.put(argName, value);
+                        LOGGER.warn("Cannot find fields for message {} ", message);
                     }
-                    matchIndices.add(matcher.start(i));
-                    matchIndices.add(matcher.end(i));
                 }
                 if (matcher.groupCount() > 0) {
                     parsedInfo.put("matchIndices", matchIndices);
