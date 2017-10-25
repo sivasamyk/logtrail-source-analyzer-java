@@ -117,25 +117,27 @@ public class LogProcessor {
 
     public Map<String, Object> process(String message, String context) {
         Map<String, Object> parsedInfo = null;
-        try {
-            List<LogPattern> patternsForContext = contextToPatternsMap.get(context);
-            if (patternsForContext == null) {
-                patternsForContext = contextToPatternsMap.get("default-context");
-            }
-            if (patternsForContext != null) {
-                parsedInfo = match(message, patternsForContext);
-                if (parsedInfo == null) {
-                    //check in default context
+        if (message != null && context != null) {
+            try {
+                List<LogPattern> patternsForContext = contextToPatternsMap.get(context);
+                if (patternsForContext == null) {
                     patternsForContext = contextToPatternsMap.get("default-context");
-                    if (patternsForContext != null) {
-                        match(message, patternsForContext);
-                    }
-                    LOGGER.debug("Cannot find match for {} in context {}", message, context);
                 }
+                if (patternsForContext != null) {
+                    parsedInfo = match(message, patternsForContext);
+                    if (parsedInfo == null) {
+                        //check in default context
+                        patternsForContext = contextToPatternsMap.get("default-context");
+                        if (patternsForContext != null) {
+                            match(message, patternsForContext);
+                        }
+                        LOGGER.debug("Cannot find match for {} in context {}", message, context);
+                    }
+                }
+            } catch (Throwable e) {
+                //log any error during processing and return empty parsedInfo
+                LOGGER.error("Exception while processing message {} in context {} ", message, context, e);
             }
-        } catch (Throwable e) {
-            //log any error during processing and return empty parsedInfo
-            LOGGER.error(MessageFormat.format("Exception while processing message {0} in context {1} ", message, context), e);
         }
         return parsedInfo;
     }
